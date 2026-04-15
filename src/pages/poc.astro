@@ -1,0 +1,19 @@
+---
+import '../styles/global.css';
+import PoseAnalyzer from '../components/PoseAnalyzer';
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FormSensei PoC</title>
+  </head>
+  <body class="bg-gray-950 min-h-screen">
+    <main class="max-w-4xl mx-auto px-4 py-8">
+      <h1 class="text-3xl font-bold text-white mb-2">FormSensei PoC</h1>
+      <p class="text-gray-400 mb-8">MediaPipe 骨格検出テスト</p>
+      <PoseAnalyzer client:only="react" />
+    </main>
+  </body>
+</html>

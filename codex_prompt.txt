@@ -1,0 +1,45 @@
+以下の2ファイルを新規作成してください。
+
+=== ファイル1: src/components/PoseAnalyzer.tsx ===
+
+React コンポーネント（client:only で使用、SSR不要）。
+
+機能:
+1. 画像ファイルのアップロード（input type=file, accept=image/*）
+2. FileReader で dataURL に変換し HTMLImageElement に読み込む
+3. @mediapipe/tasks-vision の PoseLandmarker を初期化
+   - wasmFilePath: https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm
+   - modelAssetPath: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
+   - runningMode: IMAGE
+4. 画像上で detectForImage() を実行
+5. Canvas を画像と同サイズで重ね、PoseLandmarkerResult を描画
+   - DrawingUtils で骨格ライン + ランドマーク点を描く（緑系カラー）
+6. 8箇所の関節角度を計算して UI に表示
+   - 左肘・右肘・左膝・右膝（各2箇所）＋左肩・右肩
+   - angle = arccos(dot(vecA, vecB) / (|vecA| * |vecB|)) で計算（度数法）
+7. ローディング状態（モデル読み込み中 / 解析中）をスピナーで表示
+8. Tailwind CSS でスタイリング（ダーク系: bg-gray-900, text-white）
+
+=== ファイル2: src/pages/poc.astro ===
+
+---
+import '../styles/global.css';
+import PoseAnalyzer from '../components/PoseAnalyzer';
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KataLab PoC</title>
+  </head>
+  <body class="bg-gray-950 min-h-screen">
+    <main class="max-w-4xl mx-auto px-4 py-8">
+      <h1 class="text-3xl font-bold text-white mb-2">KataLab PoC</h1>
+      <p class="text-gray-400 mb-8">MediaPipe 骨格検出テスト</p>
+      <PoseAnalyzer client:only="react" />
+    </main>
+  </body>
+</html>
+
+注意: DrawingUtils は @mediapipe/tasks-vision からimport。型エラー回避に as any を使用可。
