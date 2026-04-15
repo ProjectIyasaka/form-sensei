@@ -37,10 +37,37 @@ export default function VideoAnalyzer() {
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
   const [showTrail, setShowTrail] = useState(true);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // showTrailの変化をrefに同期（rAFループから参照するため）
   useEffect(() => { showTrailRef.current = showTrail; }, [showTrail]);
+
+  // 再生速度の変更
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.playbackRate = playbackRate;
+  }, [playbackRate]);
+
+  // キーボードショートカット（解析完了後のみ有効）
+  useEffect(() => {
+    if (!done) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const video = videoRef.current;
+      if (!video) return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        video.pause();
+        video.currentTime = Math.min(video.duration, video.currentTime + FRAME_INTERVAL);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        video.pause();
+        video.currentTime = Math.max(0, video.currentTime - FRAME_INTERVAL);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [done]);
 
   // モデル初期化
   useEffect(() => {
@@ -160,14 +187,27 @@ export default function VideoAnalyzer() {
     setProgress(0);
     setErrorMessage(null);
 
+    // durationが有効になるまで待つ（moovが末尾の録画ファイル対応）
     await new Promise<void>((resolve) => {
-      if (video.readyState >= 1) { resolve(); return; }
-      video.addEventListener('loadedmetadata', () => resolve(), { once: true });
+      if (video.readyState >= 1 && isFinite(video.duration) && video.duration > 0) {
+        resolve(); return;
+      }
+      const onMeta = () => {
+        if (isFinite(video.duration) && video.duration > 0) { resolve(); }
+      };
+      video.addEventListener('loadedmetadata', onMeta, { once: true });
+      video.addEventListener('durationchange', onMeta);
+      video.load();
+      // 10秒タイムアウト
+      setTimeout(() => {
+        video.removeEventListener('durationchange', onMeta);
+        resolve();
+      }, 10000);
     });
 
     const duration = video.duration;
-    if (!duration || !isFinite(duration)) {
-      setErrorMessage('動画の長さを取得できませんでした。');
+    if (!duration || !isFinite(duration) || duration <= 0) {
+      setErrorMessage(`動画の長さを取得できませんでした（duration: ${video.duration}）。別のファイルをお試しください。`);
       setIsAnalyzing(false);
       return;
     }
@@ -184,8 +224,15 @@ export default function VideoAnalyzer() {
     let frameIdx = 0;
 
     const processFrame = () =>
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve, reject) => {
+        // 5秒タイムアウト（seekedが来ない場合のフェイルセーフ）
+        const timer = setTimeout(() => {
+          video.onseeked = null;
+          reject(new Error(`フレーム${frameIdx}でシークタイムアウト（time: ${(frameIdx * FRAME_INTERVAL).toFixed(2)}s）`));
+        }, 5000);
+
         video.onseeked = () => {
+          clearTimeout(timer);
           video.onseeked = null;
           const timestampMs = video.currentTime * 1000;
           let landmarks: LandmarkPoint[] | null = null;
@@ -252,6 +299,7 @@ export default function VideoAnalyzer() {
             ref={videoRef}
             src={videoUrl}
             controls
+            preload="auto"
             className="w-full block"
             onLoadedMetadata={() => {
               const v = videoRef.current;
@@ -295,20 +343,69 @@ export default function VideoAnalyzer() {
       )}
 
       {done && (
-        <div className="flex flex-wrap items-center gap-4">
-          <button
-            onClick={() => setShowTrail((v) => !v)}
-            className="rounded-xl border border-gray-600 px-5 py-2 text-sm text-gray-200 hover:bg-gray-800"
-          >
-            軌跡を{showTrail ? '非表示' : '表示'}
-          </button>
-          <div className="flex gap-4 text-sm text-gray-300">
-            <span className="flex items-center gap-2">
-              <span className="inline-block h-3 w-6 rounded-full bg-[#67e8f9]" />左手首
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="inline-block h-3 w-6 rounded-full bg-[#fb923c]" />右手首
-            </span>
+        <div className="space-y-3">
+          {/* スロー再生 */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-400 w-16">再生速度</span>
+            {[0.25, 0.5, 1, 2].map((rate) => (
+              <button
+                key={rate}
+                onClick={() => setPlaybackRate(rate)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                  playbackRate === rate
+                    ? 'bg-green-500 text-gray-950'
+                    : 'border border-gray-600 text-gray-300 hover:bg-gray-800'
+                }`}
+              >
+                {rate === 1 ? '×1' : rate === 0.25 ? '×¼' : rate === 0.5 ? '×½' : '×2'}
+              </button>
+            ))}
+          </div>
+
+          {/* コマ送り */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-gray-400 w-16">コマ送り</span>
+            <button
+              onClick={() => {
+                const v = videoRef.current;
+                if (!v) return;
+                v.pause();
+                v.currentTime = Math.max(0, v.currentTime - FRAME_INTERVAL);
+              }}
+              className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
+            >
+              ◀ 1コマ戻る
+            </button>
+            <button
+              onClick={() => {
+                const v = videoRef.current;
+                if (!v) return;
+                v.pause();
+                v.currentTime = Math.min(v.duration, v.currentTime + FRAME_INTERVAL);
+              }}
+              className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
+            >
+              1コマ進む ▶
+            </button>
+            <span className="text-xs text-gray-500">（← → キーでも操作可）</span>
+          </div>
+
+          {/* 軌跡 + 凡例 */}
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              onClick={() => setShowTrail((v) => !v)}
+              className="rounded-xl border border-gray-600 px-5 py-2 text-sm text-gray-200 hover:bg-gray-800"
+            >
+              軌跡を{showTrail ? '非表示' : '表示'}
+            </button>
+            <div className="flex gap-4 text-sm text-gray-300">
+              <span className="flex items-center gap-2">
+                <span className="inline-block h-3 w-6 rounded-full bg-[#67e8f9]" />左手首
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="inline-block h-3 w-6 rounded-full bg-[#fb923c]" />右手首
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -321,7 +418,7 @@ export default function VideoAnalyzer() {
 
       {done && (
         <p className="text-xs text-gray-500">
-          動画を再生すると骨格・軌跡がフレームに同期して動きます。
+          再生・スロー・コマ送り（← →キー）で確認できます。
         </p>
       )}
     </section>
