@@ -11,8 +11,18 @@ const MODEL_ASSET_PATH =
 
 const FRAME_INTERVAL = 1 / 30;
 
+// landmark 0-22: 上半身（頭・肩・腕・手首・腰）
+// landmark 23-32: 下半身（膝・足首・踵・つま先）
+const UPPER_BODY_MAX = 22;
+
+type BudoMode = 'no-weapon' | 'weapon';
 type LandmarkPoint = { x: number; y: number; z?: number };
 type StoredFrame = { time: number; landmarks: LandmarkPoint[] | null };
+
+const BUDO_MODES: { value: BudoMode; label: string; sub: string }[] = [
+  { value: 'no-weapon', label: '武器なし', sub: '空手・テコンドー・太極拳' },
+  { value: 'weapon',    label: '武器あり', sub: '居合道・剣道・薙刀・杖術' },
+];
 
 function Spinner({ label }: { label: string }) {
   return (
@@ -24,32 +34,32 @@ function Spinner({ label }: { label: string }) {
 }
 
 export default function VideoAnalyzer() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef    = useRef<HTMLVideoElement | null>(null);
+  const canvasRef   = useRef<HTMLCanvasElement | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
-  const storedFramesRef = useRef<StoredFrame[]>([]);
-  const rafRef = useRef<number | null>(null);
+  const storedFramesRef   = useRef<StoredFrame[]>([]);
+  const rafRef      = useRef<number | null>(null);
   const showTrailRef = useRef(true);
+  const modeRef     = useRef<BudoMode>('no-weapon');
 
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl]       = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState(true);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [done, setDone] = useState(false);
-  const [showTrail, setShowTrail] = useState(true);
+  const [isAnalyzing, setIsAnalyzing]   = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [done, setDone]                 = useState(false);
+  const [showTrail, setShowTrail]       = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [mode, setMode]                 = useState<BudoMode>('no-weapon');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // showTrailの変化をrefに同期（rAFループから参照するため）
   useEffect(() => { showTrailRef.current = showTrail; }, [showTrail]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
 
-  // 再生速度の変更
   useEffect(() => {
     const video = videoRef.current;
     if (video) video.playbackRate = playbackRate;
   }, [playbackRate]);
 
-  // キーボードショートカット（解析完了後のみ有効）
   useEffect(() => {
     if (!done) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -96,43 +106,51 @@ export default function VideoAnalyzer() {
     };
   }, []);
 
-  // 再生同期ループ
-  const startPlaybackLoop = () => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+  // ── 描画ヘルパー ─────────────────────────────────────
 
-    const loop = () => {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas) return;
+const drawFrame = (
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    landmarks: LandmarkPoint[] | null,
+    frameIdx: number,
+    budoMode: BudoMode,
+    showTrailFlag: boolean
+  ) => {
+    ctx.clearRect(0, 0, w, h);
 
-      const frames = storedFramesRef.current;
-      if (frames.length === 0) { rafRef.current = requestAnimationFrame(loop); return; }
+    if (landmarks) {
+      const du = new (DrawingUtils as any)(ctx);
+      const allConnections = (PoseLandmarker as any).POSE_CONNECTIONS as Array<{ start: number; end: number }>;
+      const upperConns = allConnections.filter(c => c.start <= UPPER_BODY_MAX && c.end <= UPPER_BODY_MAX);
+      const lowerConns = allConnections.filter(c => c.start > UPPER_BODY_MAX || c.end > UPPER_BODY_MAX);
 
-      const currentTime = video.currentTime;
-      // 現在時刻に最も近いフレームを探す
-      let idx = Math.round(currentTime / FRAME_INTERVAL);
-      idx = Math.max(0, Math.min(idx, frames.length - 1));
-      const frame = frames[idx];
+      // 上半身: 両モード共通で通常表示
+      du.drawConnectors(landmarks, upperConns, { color: '#34d399', lineWidth: 3 });
+      du.drawLandmarks(
+        landmarks.slice(0, UPPER_BODY_MAX + 1),
+        { color: '#86efac', fillColor: '#16a34a', lineWidth: 2, radius: 3 }
+      );
 
-      const ctx = canvas.getContext('2d');
-      if (ctx && frame) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        if (frame.landmarks) {
-          const du = new (DrawingUtils as any)(ctx);
-          du.drawConnectors(frame.landmarks, (PoseLandmarker as any).POSE_CONNECTIONS, { color: '#34d399', lineWidth: 3 });
-          du.drawLandmarks(frame.landmarks, { color: '#86efac', fillColor: '#16a34a', lineWidth: 2, radius: 3 });
+      // 下半身: 武器なし→通常、武器あり→半透明（袴で精度低）
+      const lowerOpacity = budoMode === 'weapon' ? 0.4 : 1.0;
+      du.drawConnectors(landmarks, lowerConns, {
+        color: `rgba(52,211,153,${lowerOpacity})`, lineWidth: budoMode === 'weapon' ? 2 : 3
+      });
+      du.drawLandmarks(
+        landmarks.slice(UPPER_BODY_MAX + 1),
+        {
+          color: `rgba(134,239,172,${lowerOpacity})`,
+          fillColor: `rgba(22,163,74,${lowerOpacity})`,
+          lineWidth: 1,
+          radius: budoMode === 'weapon' ? 2 : 3
         }
+      );
+    }
 
-        if (showTrailRef.current) {
-          drawTrailUpTo(ctx, canvas.width, canvas.height, idx);
-        }
-      }
-
-      rafRef.current = requestAnimationFrame(loop);
-    };
-
-    rafRef.current = requestAnimationFrame(loop);
+    if (showTrailFlag) {
+      drawTrailUpTo(ctx, w, h, frameIdx);
+    }
   };
 
   const drawTrailUpTo = (
@@ -142,12 +160,13 @@ export default function VideoAnalyzer() {
     upToIdx: number
   ) => {
     const frames = storedFramesRef.current.slice(0, upToIdx + 1);
+    const trailWidth = modeRef.current === 'weapon' ? 4 : 3;
     const drawLine = (points: (LandmarkPoint | undefined)[], color: string) => {
       const valid = points.filter((p): p is LandmarkPoint => !!p);
       if (valid.length < 2) return;
       ctx.beginPath();
       ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = trailWidth;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.moveTo(valid[0].x * w, valid[0].y * h);
@@ -159,6 +178,31 @@ export default function VideoAnalyzer() {
     drawLine(frames.map(f => f.landmarks?.[15]), '#67e8f9');
     drawLine(frames.map(f => f.landmarks?.[16]), '#fb923c');
   };
+
+  // ── 再生同期ループ ────────────────────────────────────
+
+  const startPlaybackLoop = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    const loop = () => {
+      const video  = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas) return;
+      const frames = storedFramesRef.current;
+      if (frames.length > 0) {
+        let idx = Math.round(video.currentTime / FRAME_INTERVAL);
+        idx = Math.max(0, Math.min(idx, frames.length - 1));
+        const frame = frames[idx];
+        const ctx = canvas.getContext('2d');
+        if (ctx && frame) {
+          drawFrame(ctx, canvas.width, canvas.height, frame.landmarks, idx, modeRef.current, showTrailRef.current);
+        }
+      }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+  };
+
+  // ── ファイル選択 ──────────────────────────────────────
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -174,9 +218,11 @@ export default function VideoAnalyzer() {
     if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
   };
 
+  // ── 解析 ─────────────────────────────────────────────
+
   const startAnalysis = async () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
+    const video    = videoRef.current;
+    const canvas   = canvasRef.current;
     const landmarker = poseLandmarkerRef.current;
     if (!video || !canvas || !landmarker) return;
 
@@ -187,32 +233,23 @@ export default function VideoAnalyzer() {
     setProgress(0);
     setErrorMessage(null);
 
-    // durationが有効になるまで待つ（moovが末尾の録画ファイル対応）
     await new Promise<void>((resolve) => {
-      if (video.readyState >= 1 && isFinite(video.duration) && video.duration > 0) {
-        resolve(); return;
-      }
-      const onMeta = () => {
-        if (isFinite(video.duration) && video.duration > 0) { resolve(); }
-      };
+      if (video.readyState >= 1 && isFinite(video.duration) && video.duration > 0) { resolve(); return; }
+      const onMeta = () => { if (isFinite(video.duration) && video.duration > 0) resolve(); };
       video.addEventListener('loadedmetadata', onMeta, { once: true });
       video.addEventListener('durationchange', onMeta);
       video.load();
-      // 10秒タイムアウト
-      setTimeout(() => {
-        video.removeEventListener('durationchange', onMeta);
-        resolve();
-      }, 10000);
+      setTimeout(() => { video.removeEventListener('durationchange', onMeta); resolve(); }, 10000);
     });
 
     const duration = video.duration;
     if (!duration || !isFinite(duration) || duration <= 0) {
-      setErrorMessage(`動画の長さを取得できませんでした（duration: ${video.duration}）。別のファイルをお試しください。`);
+      setErrorMessage(`動画の長さを取得できませんでした（duration: ${video.duration}）。`);
       setIsAnalyzing(false);
       return;
     }
 
-    canvas.width = video.videoWidth || 640;
+    canvas.width  = video.videoWidth  || 640;
     canvas.height = video.videoHeight || 360;
     const ctx = canvas.getContext('2d');
     if (!ctx) { setIsAnalyzing(false); return; }
@@ -222,13 +259,13 @@ export default function VideoAnalyzer() {
 
     const totalFrames = Math.floor(duration / FRAME_INTERVAL);
     let frameIdx = 0;
+    const currentMode = modeRef.current;
 
     const processFrame = () =>
       new Promise<void>((resolve, reject) => {
-        // 5秒タイムアウト（seekedが来ない場合のフェイルセーフ）
         const timer = setTimeout(() => {
           video.onseeked = null;
-          reject(new Error(`フレーム${frameIdx}でシークタイムアウト（time: ${(frameIdx * FRAME_INTERVAL).toFixed(2)}s）`));
+          reject(new Error(`フレーム${frameIdx}でシークタイムアウト`));
         }, 5000);
 
         video.onseeked = () => {
@@ -242,15 +279,7 @@ export default function VideoAnalyzer() {
           } catch (_) { /* スキップ */ }
 
           storedFramesRef.current.push({ time: video.currentTime, landmarks });
-
-          // プレビュー描画
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          if (landmarks) {
-            const du = new (DrawingUtils as any)(ctx);
-            du.drawConnectors(landmarks, (PoseLandmarker as any).POSE_CONNECTIONS, { color: '#34d399', lineWidth: 3 });
-            du.drawLandmarks(landmarks, { color: '#86efac', fillColor: '#16a34a', lineWidth: 2, radius: 3 });
-          }
-          drawTrailUpTo(ctx, canvas.width, canvas.height, storedFramesRef.current.length - 1);
+          drawFrame(ctx, canvas.width, canvas.height, landmarks, storedFramesRef.current.length - 1, currentMode, true);
 
           frameIdx++;
           setProgress(Math.min(100, Math.round((frameIdx / totalFrames) * 100)));
@@ -270,9 +299,10 @@ export default function VideoAnalyzer() {
     setProgress(100);
     setIsAnalyzing(false);
     setDone(true);
-    // 解析完了後、再生ループ開始
     startPlaybackLoop();
   };
+
+  // ── UI ───────────────────────────────────────────────
 
   return (
     <section className="space-y-6 rounded-2xl border border-gray-800 bg-gray-900 p-6 text-white shadow-2xl shadow-black/30">
@@ -283,6 +313,38 @@ export default function VideoAnalyzer() {
         </p>
       </div>
 
+      {/* 武道種別選択 */}
+      <div>
+        <span className="mb-2 block text-sm font-medium text-gray-300">武道種別</span>
+        <div className="flex gap-3">
+          {BUDO_MODES.map(({ value, label, sub }) => (
+            <button
+              key={value}
+              onClick={() => setMode(value)}
+              className={`flex-1 rounded-xl border px-4 py-3 text-left transition-colors ${
+                mode === value
+                  ? 'border-green-500 bg-green-500/10 text-white'
+                  : 'border-gray-700 bg-gray-800/50 text-gray-400 hover:border-gray-500'
+              }`}
+            >
+              <div className="text-sm font-semibold">{label}</div>
+              <div className="text-xs text-gray-500 mt-0.5">{sub}</div>
+            </button>
+          ))}
+        </div>
+        {mode === 'no-weapon' && (
+          <p className="mt-2 text-xs text-yellow-500/80">
+            ※ 袴着用時は膝・足首の精度が低下します（半透明で表示）
+          </p>
+        )}
+        {mode === 'weapon' && (
+          <p className="mt-2 text-xs text-gray-500">
+            上半身・手首軌跡に特化して解析します。下半身は除外されます。
+          </p>
+        )}
+      </div>
+
+      {/* 動画ファイル */}
       <label className="block">
         <span className="mb-2 block text-sm font-medium text-gray-300">動画ファイル</span>
         <input
@@ -293,6 +355,7 @@ export default function VideoAnalyzer() {
         />
       </label>
 
+      {/* 動画プレイヤー + キャンバスオーバーレイ */}
       {videoUrl && (
         <div className="relative rounded-xl border border-gray-800 bg-gray-950/80 overflow-hidden">
           <video
@@ -307,10 +370,7 @@ export default function VideoAnalyzer() {
               if (v && c) { c.width = v.videoWidth; c.height = v.videoHeight; }
             }}
           />
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 w-full h-full pointer-events-none"
-          />
+          <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
         </div>
       )}
 
@@ -319,10 +379,7 @@ export default function VideoAnalyzer() {
         <div className="space-y-2">
           <Spinner label={`解析中... ${progress}%`} />
           <div className="h-2 w-full overflow-hidden rounded-full bg-gray-700">
-            <div
-              className="h-full bg-green-400 transition-all duration-150"
-              style={{ width: `${progress}%` }}
-            />
+            <div className="h-full bg-green-400 transition-all duration-150" style={{ width: `${progress}%` }} />
           </div>
         </div>
       )}
@@ -344,7 +401,7 @@ export default function VideoAnalyzer() {
 
       {done && (
         <div className="space-y-3">
-          {/* スロー再生 */}
+          {/* 再生速度 */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-gray-400 w-16">再生速度</span>
             {[0.25, 0.5, 1, 2].map((rate) => (
@@ -366,23 +423,13 @@ export default function VideoAnalyzer() {
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-gray-400 w-16">コマ送り</span>
             <button
-              onClick={() => {
-                const v = videoRef.current;
-                if (!v) return;
-                v.pause();
-                v.currentTime = Math.max(0, v.currentTime - FRAME_INTERVAL);
-              }}
+              onClick={() => { const v = videoRef.current; if (!v) return; v.pause(); v.currentTime = Math.max(0, v.currentTime - FRAME_INTERVAL); }}
               className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
             >
               ◀ 1コマ戻る
             </button>
             <button
-              onClick={() => {
-                const v = videoRef.current;
-                if (!v) return;
-                v.pause();
-                v.currentTime = Math.min(v.duration, v.currentTime + FRAME_INTERVAL);
-              }}
+              onClick={() => { const v = videoRef.current; if (!v) return; v.pause(); v.currentTime = Math.min(v.duration, v.currentTime + FRAME_INTERVAL); }}
               className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
             >
               1コマ進む ▶
@@ -390,7 +437,7 @@ export default function VideoAnalyzer() {
             <span className="text-xs text-gray-500">（← → キーでも操作可）</span>
           </div>
 
-          {/* 軌跡 + 凡例 */}
+          {/* 軌跡トグル + 凡例 */}
           <div className="flex flex-wrap items-center gap-4">
             <button
               onClick={() => setShowTrail((v) => !v)}
