@@ -1,0 +1,56 @@
+以下の2ファイルを新規作成してください。
+
+既存ファイルの参考情報:
+- src/components/PoseAnalyzer.tsx: 静止画用の骨格検出コンポーネント（WASM/モデルパスはこれと同じにする）
+  - WASM: https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm
+  - Model: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
+
+=== ファイル1: src/components/VideoAnalyzer.tsx ===
+
+React コンポーネント（client:only で使用、SSR不要）。
+
+機能:
+1. 動画ファイルのアップロード（input type=file, accept=video/*）
+2. アップロードされた動画を <video> タグで表示・再生
+3. @mediapipe/tasks-vision の PoseLandmarker を初期化
+   - runningMode: "VIDEO"（静止画と異なりVIDEOモードにする）
+4. 「解析開始」ボタンを押すと動画を1フレームずつ処理
+   - requestAnimationFrame ループで video.currentTime を進めながら detectForVideo() を呼ぶ
+   - 各フレームの骨格を Canvas に描画（動画と同サイズで重ねる）
+   - DrawingUtils で骨格ライン（緑）+ ランドマーク点を描く
+5. 手首軌跡の描画
+   - 左手首（landmark[15]）と右手首（landmark[16]）の座標を全フレーム分配列に蓄積
+   - Canvas 上に軌跡をポリラインで描画（左: 水色 #67e8f9、右: オレンジ #fb923c）
+   - 軌跡は骨格描画後に上書き描画する
+6. 解析進捗バー（0〜100%）を表示
+7. 解析完了後、「軌跡を表示/非表示」トグルボタンを表示
+8. ローディング状態（モデル読み込み中 / 解析中）をスピナーで表示
+9. Tailwind CSS でスタイリング（ダーク系: bg-gray-900, text-white、PoseAnalyzer.tsx と統一感あるデザイン）
+
+注意:
+- detectForVideo() の第2引数は timestamp（ミリ秒）。video.currentTime * 1000 を渡す
+- 動画の全フレームを処理するため、video.paused 状態で seeked イベントを使って1フレームずつ進める方式でもOK
+- DrawingUtils は @mediapipe/tasks-vision からimport。型エラー回避に as any を使用可
+- 軌跡配列は解析完了後も保持し、トグルで表示切替できるようにする
+
+=== ファイル2: src/pages/video.astro ===
+
+---
+import '../styles/global.css';
+import VideoAnalyzer from '../components/VideoAnalyzer';
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FormSensei - 動画解析</title>
+  </head>
+  <body class="bg-gray-950 min-h-screen">
+    <main class="max-w-4xl mx-auto px-4 py-8">
+      <h1 class="text-3xl font-bold text-white mb-2">FormSensei</h1>
+      <p class="text-gray-400 mb-8">動画フォーム解析 - 手首軌跡・骨格検出</p>
+      <VideoAnalyzer client:only="react" />
+    </main>
+  </body>
+</html>
