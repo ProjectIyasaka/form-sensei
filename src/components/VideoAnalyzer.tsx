@@ -26,7 +26,7 @@ const BUDO_MODES: { value: BudoMode; label: string; sub: string }[] = [
 
 function Spinner({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/70 px-4 py-3 text-sm text-gray-200">
+    <div className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm text-slate-200">
       <div className="h-5 w-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
       <span>{label}</span>
     </div>
@@ -305,59 +305,62 @@ const drawFrame = (
   // ── UI ───────────────────────────────────────────────
 
   return (
-    <section className="space-y-6 rounded-2xl border border-gray-800 bg-gray-900 p-6 text-white shadow-2xl shadow-black/30">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-semibold">動画解析</h2>
-        <p className="text-sm text-gray-400">
-          動画をアップロードして骨格検出・手首軌跡を可視化します。
-        </p>
-      </div>
+    <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900 p-5 text-slate-100 shadow-2xl shadow-black/30 sm:p-6">
 
-      {/* 武道種別選択 */}
+      {/* 武道種別選択（SegmentedControl風） */}
       <div>
-        <span className="mb-2 block text-sm font-medium text-gray-300">武道種別</span>
-        <div className="flex gap-3">
+        <span className="mb-2.5 block text-sm font-medium text-slate-300">武道種別</span>
+        <div className="flex rounded-xl border border-slate-700 bg-slate-950/60 p-1 gap-1">
           {BUDO_MODES.map(({ value, label, sub }) => (
             <button
               key={value}
               onClick={() => setMode(value)}
-              className={`flex-1 rounded-xl border px-4 py-3 text-left transition-colors ${
+              className={`flex-1 rounded-lg px-4 py-3 text-left transition-all duration-150 min-h-[44px] ${
                 mode === value
-                  ? 'border-green-500 bg-green-500/10 text-white'
-                  : 'border-gray-700 bg-gray-800/50 text-gray-400 hover:border-gray-500'
+                  ? 'bg-slate-800 shadow-sm border border-slate-700'
+                  : 'hover:bg-slate-800/50'
               }`}
             >
-              <div className="text-sm font-semibold">{label}</div>
-              <div className="text-xs text-gray-500 mt-0.5">{sub}</div>
+              <div className={`text-sm font-semibold ${mode === value ? 'text-green-400' : 'text-slate-400'}`}>{label}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{sub}</div>
             </button>
           ))}
         </div>
-        {mode === 'no-weapon' && (
-          <p className="mt-2 text-xs text-yellow-500/80">
-            ※ 袴着用時は膝・足首の精度が低下します（半透明で表示）
-          </p>
-        )}
         {mode === 'weapon' && (
-          <p className="mt-2 text-xs text-gray-500">
-            上半身・手首軌跡に特化して解析します。下半身は除外されます。
+          <p className="mt-2 text-xs text-cyan-400/80">
+            上半身・手首軌跡に特化して解析します。下半身は半透明で表示されます。
           </p>
         )}
       </div>
 
-      {/* 動画ファイル */}
-      <label className="block">
-        <span className="mb-2 block text-sm font-medium text-gray-300">動画ファイル</span>
-        <input
-          type="file"
-          accept="video/*"
-          onChange={handleFileChange}
-          className="block w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 file:mr-4 file:rounded-lg file:border-0 file:bg-green-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-gray-950 hover:file:bg-green-400"
-        />
-      </label>
+      {/* 動画ファイルアップロード */}
+      <div>
+        <span className="mb-2.5 block text-sm font-medium text-slate-300">動画ファイル</span>
+        <label className={`flex min-h-[80px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors ${
+          videoUrl
+            ? 'border-slate-700 bg-slate-800/40 hover:border-slate-600'
+            : 'border-slate-700 bg-slate-950/40 hover:border-green-500/50 hover:bg-green-500/5'
+        }`}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" className="h-6 w-6 text-slate-500" aria-hidden="true">
+            <rect x="2" y="6" width="14" height="12" rx="2" />
+            <path d="m16 10 6-3v10l-6-3" />
+          </svg>
+          <span className="text-sm text-slate-400">
+            {videoUrl ? '別の動画を選択' : 'クリックして動画を選択'}
+          </span>
+          <span className="text-xs text-slate-600">MP4, MOV, WebM など</span>
+          <input
+            type="file"
+            accept="video/*"
+            onChange={handleFileChange}
+            className="sr-only"
+          />
+        </label>
+      </div>
 
       {/* 動画プレイヤー + キャンバスオーバーレイ */}
       {videoUrl && (
-        <div className="relative rounded-xl border border-gray-800 bg-gray-950/80 overflow-hidden">
+        <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
           <video
             ref={videoRef}
             src={videoUrl}
@@ -375,17 +378,22 @@ const drawFrame = (
       )}
 
       {loadingModel && <Spinner label="モデル読み込み中..." />}
+
       {isAnalyzing && (
         <div className="space-y-2">
           <Spinner label={`解析中... ${progress}%`} />
-          <div className="h-2 w-full overflow-hidden rounded-full bg-gray-700">
-            <div className="h-full bg-green-400 transition-all duration-150" style={{ width: `${progress}%` }} />
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-150"
+              style={{ width: `${progress}%` }}
+            />
           </div>
+          <p className="text-right text-xs text-slate-500">{progress}%</p>
         </div>
       )}
 
       {errorMessage && (
-        <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+        <div className="rounded-xl border border-red-500/30 bg-red-500/8 px-4 py-3 text-sm text-red-300">
           {errorMessage}
         </div>
       )}
@@ -393,80 +401,84 @@ const drawFrame = (
       {videoUrl && !isAnalyzing && !loadingModel && (
         <button
           onClick={() => void startAnalysis()}
-          className="rounded-xl bg-green-500 px-6 py-3 text-sm font-semibold text-gray-950 hover:bg-green-400"
+          className="min-h-[44px] w-full rounded-xl bg-green-500 px-6 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-green-400 active:bg-green-600 sm:w-auto"
         >
           {done ? '再解析' : '解析開始'}
         </button>
       )}
 
-      {done && (
-        <div className="space-y-3">
-          {/* 再生速度 */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-400 w-16">再生速度</span>
-            {[0.25, 0.5, 1, 2].map((rate) => (
-              <button
-                key={rate}
-                onClick={() => setPlaybackRate(rate)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                  playbackRate === rate
-                    ? 'bg-green-500 text-gray-950'
-                    : 'border border-gray-600 text-gray-300 hover:bg-gray-800'
-                }`}
-              >
-                {rate === 1 ? '×1' : rate === 0.25 ? '×¼' : rate === 0.5 ? '×½' : '×2'}
-              </button>
-            ))}
-          </div>
-
-          {/* コマ送り */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-400 w-16">コマ送り</span>
-            <button
-              onClick={() => { const v = videoRef.current; if (!v) return; v.pause(); v.currentTime = Math.max(0, v.currentTime - FRAME_INTERVAL); }}
-              className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
-            >
-              ◀ 1コマ戻る
-            </button>
-            <button
-              onClick={() => { const v = videoRef.current; if (!v) return; v.pause(); v.currentTime = Math.min(v.duration, v.currentTime + FRAME_INTERVAL); }}
-              className="rounded-lg border border-gray-600 px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800"
-            >
-              1コマ進む ▶
-            </button>
-            <span className="text-xs text-gray-500">（← → キーでも操作可）</span>
-          </div>
-
-          {/* 軌跡トグル + 凡例 */}
-          <div className="flex flex-wrap items-center gap-4">
-            <button
-              onClick={() => setShowTrail((v) => !v)}
-              className="rounded-xl border border-gray-600 px-5 py-2 text-sm text-gray-200 hover:bg-gray-800"
-            >
-              軌跡を{showTrail ? '非表示' : '表示'}
-            </button>
-            <div className="flex gap-4 text-sm text-gray-300">
-              <span className="flex items-center gap-2">
-                <span className="inline-block h-3 w-6 rounded-full bg-[#67e8f9]" />左手首
-              </span>
-              <span className="flex items-center gap-2">
-                <span className="inline-block h-3 w-6 rounded-full bg-[#fb923c]" />右手首
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {!videoUrl && (
-        <div className="flex min-h-64 items-center justify-center rounded-2xl border border-gray-800 bg-gray-950/80 text-sm text-gray-500">
+      {!videoUrl && !loadingModel && (
+        <div className="flex min-h-48 items-center justify-center rounded-xl border border-slate-800 bg-slate-950/50 text-sm text-slate-600">
           解析する動画を選択してください
         </div>
       )}
 
+      {/* 解析完了後のコントロール */}
       {done && (
-        <p className="text-xs text-gray-500">
-          再生・スロー・コマ送り（← →キー）で確認できます。
-        </p>
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+
+          {/* 再生速度 */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-16 shrink-0 text-xs text-slate-400">再生速度</span>
+            <div className="flex gap-1.5">
+              {[0.25, 0.5, 1, 2].map((rate) => (
+                <button
+                  key={rate}
+                  onClick={() => setPlaybackRate(rate)}
+                  className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    playbackRate === rate
+                      ? 'bg-green-500 text-slate-950'
+                      : 'border border-slate-700 text-slate-300 hover:border-slate-600 hover:bg-slate-800'
+                  }`}
+                >
+                  {rate === 1 ? '×1' : rate === 0.25 ? '×¼' : rate === 0.5 ? '×½' : '×2'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* コマ送り */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-16 shrink-0 text-xs text-slate-400">コマ送り</span>
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => { const v = videoRef.current; if (!v) return; v.pause(); v.currentTime = Math.max(0, v.currentTime - FRAME_INTERVAL); }}
+                className="min-h-[36px] rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-600 hover:bg-slate-800"
+              >
+                ◀ 戻る
+              </button>
+              <button
+                onClick={() => { const v = videoRef.current; if (!v) return; v.pause(); v.currentTime = Math.min(v.duration, v.currentTime + FRAME_INTERVAL); }}
+                className="min-h-[36px] rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-slate-600 hover:bg-slate-800"
+              >
+                進む ▶
+              </button>
+            </div>
+            <span className="text-xs text-slate-600">（← → キーでも操作可）</span>
+          </div>
+
+          {/* 軌跡トグル + 凡例 */}
+          <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-slate-800">
+            <button
+              onClick={() => setShowTrail((v) => !v)}
+              className={`min-h-[36px] rounded-lg border px-4 py-1.5 text-xs font-medium transition-colors ${
+                showTrail
+                  ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400'
+                  : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+              }`}
+            >
+              軌跡 {showTrail ? 'ON' : 'OFF'}
+            </button>
+            <div className="flex gap-3 text-xs text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-5 rounded-full bg-[#67e8f9]" />左手首
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2.5 w-5 rounded-full bg-[#fb923c]" />右手首
+              </span>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

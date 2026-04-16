@@ -1,16 +1,17 @@
 ---
 import '../styles/global.css';
-import VideoAnalyzer from '../components/VideoAnalyzer';
+import SelfCompare from '../components/SelfCompare';
 ---
 
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>動画解析 | form-sensei</title>
+    <title>自己比較 | form-sensei</title>
   </head>
   <body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
-    <div class="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
+    <div class="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <!-- パンくずナビ -->
       <nav class="mb-6 flex items-center gap-2 text-sm" aria-label="パンくず">
         <a href="/" class="flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 py-1 text-slate-400 transition-colors hover:text-slate-100">
@@ -20,16 +21,10 @@ import VideoAnalyzer from '../components/VideoAnalyzer';
           ホーム
         </a>
         <span class="text-slate-700" aria-hidden="true">/</span>
-        <span class="font-medium text-cyan-400">動画解析</span>
+        <span class="font-medium text-green-400">自己比較</span>
       </nav>
 
-      <!-- ページヘッダー -->
-      <div class="mb-6">
-        <h1 class="text-2xl font-bold text-slate-100">動画解析 <span class="ml-2 text-xs font-medium tracking-wider text-slate-500 align-middle">PoC</span></h1>
-        <p class="mt-1 text-sm text-slate-400">手首軌跡・武器術対応の骨格検出</p>
-      </div>
-
-      <VideoAnalyzer client:only="react" />
+      <SelfCompare client:only="react" />
     </div>
   </body>
 </html>

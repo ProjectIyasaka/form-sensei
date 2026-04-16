@@ -6,6 +6,9 @@ import tailwindcss from '@tailwindcss/vite';
 
 // https://astro.build/config
 export default defineConfig({
+  output: 'static',
+  site: 'https://form-sensei.pages.dev',
+
   integrations: [react()],
 
   vite: {

@@ -35,7 +35,7 @@ const ANGLE_CONFIG = [
 
 function Spinner({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/70 px-4 py-3 text-sm text-gray-200">
+    <div className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 px-4 py-3 text-sm text-slate-200">
       <div className="h-5 w-5 animate-spin rounded-full border-2 border-green-400 border-t-transparent" />
       <span>{label}</span>
     </div>
@@ -253,21 +253,28 @@ export default function PoseAnalyzer() {
   };
 
   return (
-    <section className="space-y-6 rounded-2xl border border-gray-800 bg-gray-900 p-6 text-white shadow-2xl shadow-black/30">
-      <div className="space-y-2">
-        <h2 className="text-2xl font-semibold">Pose Analyzer</h2>
-        <p className="text-sm text-gray-400">
-          画像をアップロードすると、MediaPipe Pose Landmarker で骨格を描画し関節角度を計算します。
-        </p>
-      </div>
+    <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900 p-5 text-slate-100 shadow-2xl shadow-black/30 sm:p-6">
 
-      <label className="block">
-        <span className="mb-2 block text-sm font-medium text-gray-300">画像ファイル</span>
+      {/* アップロードゾーン */}
+      <label className={`flex min-h-[80px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-5 text-center transition-colors ${
+        imageDataUrl
+          ? 'border-slate-700 bg-slate-800/40 hover:border-slate-600'
+          : 'border-slate-700 bg-slate-950/40 hover:border-green-500/50 hover:bg-green-500/5'
+      }`}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-slate-500" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" />
+          <path d="m21 15-5-5L5 21" />
+        </svg>
+        <span className="text-sm text-slate-400">
+          {imageDataUrl ? '別の画像を選択' : 'クリックして画像を選択'}
+        </span>
+        <span className="text-xs text-slate-600">JPG, PNG, HEIC など</span>
         <input
           type="file"
           accept="image/*"
           onChange={handleFileChange}
-          className="block w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 file:mr-4 file:rounded-lg file:border-0 file:bg-green-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-gray-950 hover:file:bg-green-400"
+          className="sr-only"
         />
       </label>
 
@@ -276,15 +283,16 @@ export default function PoseAnalyzer() {
       )}
 
       {errorMessage && (
-        <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+        <div className="rounded-xl border border-red-500/30 bg-red-500/8 px-4 py-3 text-sm text-red-300">
           {errorMessage}
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
-        <div className="rounded-2xl border border-gray-800 bg-gray-950/80 p-4">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(260px,1fr)]">
+        {/* 画像 + 骨格オーバーレイ */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
           {imageDataUrl ? (
-            <div className="relative overflow-hidden rounded-xl border border-gray-800 bg-black">
+            <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-black">
               <img
                 src={imageDataUrl}
                 alt="アップロードされた解析対象"
@@ -293,26 +301,33 @@ export default function PoseAnalyzer() {
               <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
             </div>
           ) : (
-            <div className="flex min-h-80 items-center justify-center rounded-xl border border-dashed border-gray-700 bg-gray-950 text-sm text-gray-500">
-              解析する画像を選択してください
+            <div className="flex min-h-72 items-center justify-center rounded-xl border border-dashed border-slate-800 bg-slate-950/50 text-sm text-slate-600">
+              骨格検出結果がここに表示されます
             </div>
           )}
         </div>
 
-        <div className="rounded-2xl border border-gray-800 bg-gray-950/80 p-4">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold">関節角度</h3>
-            <p className="text-sm text-gray-400">推定姿勢から主要な 8 箇所の角度を表示します。</p>
+        {/* 関節角度パネル */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <div className="mb-4 border-b border-slate-800 pb-3">
+            <h3 className="text-sm font-semibold text-slate-200">関節角度</h3>
+            <p className="mt-0.5 text-xs text-slate-500">8箇所の推定角度</p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
             {angles.map((item) => (
               <div
                 key={item.key}
-                className="rounded-xl border border-gray-800 bg-gray-900/80 px-4 py-3"
+                className={`rounded-xl border px-3 py-2.5 transition-colors ${
+                  item.value != null
+                    ? 'border-slate-700/60 bg-slate-900/60'
+                    : 'border-slate-800 bg-slate-900/30'
+                }`}
               >
-                <div className="text-sm text-gray-400">{item.label}</div>
-                <div className="mt-1 text-2xl font-semibold text-green-300">
+                <div className="text-xs text-slate-500">{item.label}</div>
+                <div className={`mt-0.5 text-xl font-semibold tabular-nums ${
+                  item.value != null ? 'text-cyan-300' : 'text-slate-700'
+                }`}>
                   {item.value == null ? '--' : `${item.value.toFixed(1)}°`}
                 </div>
               </div>

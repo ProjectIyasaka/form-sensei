@@ -1,17 +1,128 @@
 ---
-
+import '../styles/global.css';
+const navCards = [
+	{
+		href: '/compare',
+		title: '自己比較',
+		description: '前回の自分との差分を確認',
+		variant:
+			'border-green-500/50 bg-green-500/5 shadow-[0_0_0_1px_rgba(34,197,94,0.08)]',
+		iconAccent: 'text-green-400',
+		icon: 'body',
+	},
+	{
+		href: '/poc',
+		title: '静止画解析',
+		description: '骨格検出・関節角度の確認',
+		variant: 'border-slate-800 bg-slate-900/90',
+		iconAccent: 'text-cyan-400',
+		icon: 'image',
+	},
+	{
+		href: '/video',
+		title: '動画解析',
+		description: '手首軌跡・武器術対応',
+		variant: 'border-slate-800 bg-slate-900/90',
+		iconAccent: 'text-cyan-400',
+		icon: 'video',
+	},
+];
 ---
 
-<html lang="en">
+<html lang="ja">
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
+		<title>form-sensei | 武道型AI解析</title>
 	</head>
-	<body>
-		<h1>Astro</h1>
+	<body class="min-h-screen bg-slate-950 text-slate-100 antialiased">
+		<div class="relative isolate overflow-hidden">
+			<!-- 背景グロー -->
+			<div class="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_top,rgba(34,197,94,0.15),transparent_55%)]"></div>
+			<div class="pointer-events-none absolute inset-x-0 top-24 h-80 bg-[radial-gradient(circle_at_top_right,rgba(34,211,238,0.10),transparent_42%)]"></div>
+
+			<main class="mx-auto flex min-h-screen w-full max-w-2xl flex-col px-4 py-8 sm:px-6 sm:py-12">
+				<!-- ヒーローセクション -->
+				<section class="rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl shadow-black/20 backdrop-blur sm:p-8">
+					<div class="flex flex-col gap-5">
+						<div class="space-y-3">
+							<p class="text-xs font-semibold tracking-[0.22em] text-cyan-400 uppercase">武道型AI解析</p>
+							<div class="space-y-2">
+								<h1 class="text-4xl font-bold tracking-tight text-green-400">form-sensei</h1>
+								<p class="text-xl font-medium leading-snug text-slate-200 sm:text-2xl">
+									自分の型を解析して、<br class="sm:hidden" />成長を確認する場所
+								</p>
+							</div>
+						</div>
+						<span class="inline-flex min-h-[44px] w-fit items-center gap-2 rounded-xl border border-cyan-400/25 bg-slate-950/70 px-4 py-2 text-sm font-medium text-cyan-400">
+							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
+								<circle cx="12" cy="12" r="3" />
+								<path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.64 5.64l1.42 1.42M16.95 16.95l1.41 1.41M5.64 18.36l1.42-1.42M16.95 7.05l1.41-1.41" />
+							</svg>
+							MediaPipe powered
+						</span>
+					</div>
+				</section>
+
+				<!-- ナビゲーションカード -->
+				<nav class="mt-5 space-y-3" aria-label="主要機能">
+					{navCards.map((card) => (
+						<a
+							href={card.href}
+							class:list={[
+								'group flex min-h-[64px] items-center justify-between gap-4 rounded-2xl border px-5 py-4 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-cyan-400/30 hover:bg-slate-800/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 sm:px-6',
+								card.variant,
+							]}
+						>
+							<div class="flex min-w-0 items-center gap-4">
+								<!-- アイコン -->
+								<div class:list={['flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-current/20 bg-slate-950/60', card.iconAccent]}>
+									{card.icon === 'body' && (
+										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6" aria-hidden="true">
+											<circle cx="12" cy="5" r="2" />
+											<path d="M12 7v6" />
+											<path d="m9 10 3 2 3-2" />
+											<path d="m10 21 2-4 2 4" />
+											<path d="m8 16 4-3 4 3" />
+										</svg>
+									)}
+									{card.icon === 'image' && (
+										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6" aria-hidden="true">
+											<rect x="3" y="5" width="18" height="14" rx="2" />
+											<circle cx="8.5" cy="10" r="1.5" />
+											<path d="m21 15-5-5L5 19" />
+										</svg>
+									)}
+									{card.icon === 'video' && (
+										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6" aria-hidden="true">
+											<rect x="2" y="6" width="14" height="12" rx="2" />
+											<path d="m16 10 6-3v10l-6-3" />
+										</svg>
+									)}
+								</div>
+								<!-- テキスト -->
+								<div class="min-w-0">
+									<div class="text-base font-semibold text-slate-100">{card.title}</div>
+									<p class="mt-0.5 text-sm text-slate-400">{card.description}</p>
+								</div>
+							</div>
+							<!-- 矢印 -->
+							<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700/60 bg-slate-950/50 text-slate-500 transition-colors group-hover:border-cyan-400/30 group-hover:text-cyan-400" aria-hidden="true">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+									<path d="M5 12h14M13 6l6 6-6 6" />
+								</svg>
+							</div>
+						</a>
+					))}
+				</nav>
+
+				<footer class="mt-auto pt-10 pb-4 text-center text-xs text-slate-600">
+					Powered by MediaPipe
+				</footer>
+			</main>
+		</div>
 	</body>
 </html>
