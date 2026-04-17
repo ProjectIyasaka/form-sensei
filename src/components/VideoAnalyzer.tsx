@@ -386,7 +386,7 @@ export default function VideoAnalyzer() {
         {mode === 'weapon' && (
           <div className="mt-2">
             <p className="text-xs text-cyan-400/80">
-              武器術では上半身と手首の動きを見やすくするため、下半身を半透明で表示します。武器先端の認識は今後別モデルで対応します。
+              武器術では上半身と手首の動きを見やすくするため、下半身を半透明で表示します。
             </p>
           </div>
         )}
