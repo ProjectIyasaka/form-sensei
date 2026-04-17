@@ -31,7 +31,6 @@ export function saveSnapshot(snapshot: AngleSnapshot): void {
   let snapshots = load();
   snapshots.push(snapshot);
 
-  // 同じ型名は最大 MAX_PER_KATA 件（古い順に削除）
   const kataItems = snapshots.filter(s => s.kataName === snapshot.kataName);
   if (kataItems.length > MAX_PER_KATA) {
     const sorted = [...kataItems].sort((a, b) => a.timestamp - b.timestamp);
@@ -39,7 +38,6 @@ export function saveSnapshot(snapshot: AngleSnapshot): void {
     snapshots = snapshots.filter(s => !removeIds.has(s.id));
   }
 
-  // 全体上限
   if (snapshots.length > MAX_TOTAL) {
     snapshots.sort((a, b) => a.timestamp - b.timestamp);
     snapshots = snapshots.slice(snapshots.length - MAX_TOTAL);
@@ -95,4 +93,75 @@ export function compressImageToDataUrl(file: File, maxWidth = 200): Promise<stri
     reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました。'));
     reader.readAsDataURL(file);
   });
+}
+
+// ── Video snapshots ───────────────────────────────────
+
+export type FrameAngle = { key: string; label: string; value: number | null };
+export type VideoFrame = { time: number; angles: FrameAngle[] };
+export type VideoSnapshot = {
+  id: string;
+  kataName: string;
+  timestamp: number;
+  duration: number;
+  frames: VideoFrame[];
+};
+
+const VIDEO_STORAGE_KEY = 'formsensei_video_snapshots';
+const MAX_VIDEO_PER_KATA = 5;
+const MAX_VIDEO_TOTAL = 20;
+
+function loadVideo(): VideoSnapshot[] {
+  try {
+    const raw = localStorage.getItem(VIDEO_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as VideoSnapshot[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistVideo(snapshots: VideoSnapshot[]): void {
+  localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(snapshots));
+}
+
+export function saveVideoSnapshot(snapshot: VideoSnapshot): void {
+  let snapshots = loadVideo();
+  snapshots.push(snapshot);
+
+  const kataItems = snapshots.filter(s => s.kataName === snapshot.kataName);
+  if (kataItems.length > MAX_VIDEO_PER_KATA) {
+    const sorted = [...kataItems].sort((a, b) => a.timestamp - b.timestamp);
+    const removeIds = new Set(sorted.slice(0, kataItems.length - MAX_VIDEO_PER_KATA).map(s => s.id));
+    snapshots = snapshots.filter(s => !removeIds.has(s.id));
+  }
+
+  if (snapshots.length > MAX_VIDEO_TOTAL) {
+    snapshots.sort((a, b) => a.timestamp - b.timestamp);
+    snapshots = snapshots.slice(snapshots.length - MAX_VIDEO_TOTAL);
+  }
+
+  persistVideo(snapshots);
+}
+
+export function getVideoSnapshotsByKata(kataName: string): VideoSnapshot[] {
+  return loadVideo()
+    .filter(s => s.kataName === kataName)
+    .sort((a, b) => b.timestamp - a.timestamp);
+}
+
+export function getAllVideoKataNames(): string[] {
+  const snapshots = loadVideo();
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const s of [...snapshots].sort((a, b) => b.timestamp - a.timestamp)) {
+    if (!seen.has(s.kataName)) {
+      seen.add(s.kataName);
+      result.push(s.kataName);
+    }
+  }
+  return result;
+}
+
+export function deleteVideoSnapshot(id: string): void {
+  persistVideo(loadVideo().filter(s => s.id !== id));
 }

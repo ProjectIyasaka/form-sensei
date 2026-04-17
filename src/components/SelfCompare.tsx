@@ -1,41 +1,42 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
-  DrawingUtils,
   FilesetResolver,
   PoseLandmarker,
   type PoseLandmarkerResult
 } from '@mediapipe/tasks-vision';
 import {
-  type AngleSnapshot,
-  saveSnapshot,
-  getSnapshotsByKata,
-  getAllKataNames,
-  deleteSnapshot,
-  compressImageToDataUrl
+  type VideoSnapshot,
+  type VideoFrame,
+  type FrameAngle,
+  saveVideoSnapshot,
+  getVideoSnapshotsByKata,
+  getAllVideoKataNames,
+  deleteVideoSnapshot,
 } from '../lib/storage';
 
 const WASM_FILE_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 const MODEL_ASSET_PATH =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task';
 
-const ANGLE_CONFIG = [
-  { key: 'leftShoulder',  label: '左肩',    points: [13, 11, 23] },
-  { key: 'rightShoulder', label: '右肩',    points: [14, 12, 24] },
-  { key: 'leftElbow',     label: '左肘',    points: [11, 13, 15] },
-  { key: 'rightElbow',    label: '右肘',    points: [12, 14, 16] },
-  { key: 'leftHip',       label: '左股関節', points: [11, 23, 25] },
-  { key: 'rightHip',      label: '右股関節', points: [12, 24, 26] },
-  { key: 'leftKnee',      label: '左膝',    points: [23, 25, 27] },
-  { key: 'rightKnee',     label: '右膝',    points: [24, 26, 28] }
-] as const;
+const FRAME_INTERVAL = 1 / 30;
 
-type AngleItem = { key: string; label: string; value: number | null };
+const ANGLE_CONFIG = [
+  { key: 'leftShoulder',  label: '左肩',     points: [13, 11, 23] as const },
+  { key: 'rightShoulder', label: '右肩',     points: [14, 12, 24] as const },
+  { key: 'leftElbow',     label: '左肘',     points: [11, 13, 15] as const },
+  { key: 'rightElbow',    label: '右肘',     points: [12, 14, 16] as const },
+  { key: 'leftHip',       label: '左股関節', points: [11, 23, 25] as const },
+  { key: 'rightHip',      label: '右股関節', points: [12, 24, 26] as const },
+  { key: 'leftKnee',      label: '左膝',     points: [23, 25, 27] as const },
+  { key: 'rightKnee',     label: '右膝',     points: [24, 26, 28] as const },
+];
+
 type LandmarkLike = { x: number; y: number; z?: number };
 type Step = 'input' | 'analyze' | 'compare';
 
 const STEP_LABELS: { key: Step; label: string }[] = [
   { key: 'input',   label: '型名入力' },
-  { key: 'analyze', label: '写真解析' },
+  { key: 'analyze', label: '動画解析' },
   { key: 'compare', label: '比較結果' },
 ];
 
@@ -55,10 +56,10 @@ function calculateAngle(a: LandmarkLike, b: LandmarkLike, c: LandmarkLike): numb
   const magA = Math.hypot(vA.x, vA.y, vA.z);
   const magB = Math.hypot(vB.x, vB.y, vB.z);
   if (magA === 0 || magB === 0) return null;
-  return (Math.acos(Math.min(1, Math.max(-1, dot / (magA * magB)))) * 180) / Math.PI;
+  return Math.round((Math.acos(Math.min(1, Math.max(-1, dot / (magA * magB)))) * 180) / Math.PI * 10) / 10;
 }
 
-function buildAngles(result: PoseLandmarkerResult): AngleItem[] {
+function buildAngles(result: PoseLandmarkerResult): FrameAngle[] {
   const landmarks = result.landmarks[0];
   if (!landmarks) return ANGLE_CONFIG.map(({ key, label }) => ({ key, label, value: null }));
   return ANGLE_CONFIG.map(({ key, label, points }) => {
@@ -75,48 +76,112 @@ function formatDate(ts: number) {
   });
 }
 
+function AngleChart({ current, prev, angleKey }: {
+  current: VideoSnapshot;
+  prev: VideoSnapshot | null;
+  angleKey: string;
+}) {
+  const W = 560, H = 160;
+  const PL = 36, PR = 10, PT = 8, PB = 22;
+  const plotW = W - PL - PR;
+  const plotH = H - PT - PB;
+
+  const maxDur = Math.max(current.duration, prev?.duration ?? 0);
+  const xScale = (t: number) => PL + (t / maxDur) * plotW;
+  const yScale = (v: number) => PT + (1 - v / 180) * plotH;
+
+  const toPolyline = (frames: VideoFrame[]) => {
+    const pts = frames
+      .map(f => {
+        const a = f.angles.find(a => a.key === angleKey);
+        return a?.value != null ? `${xScale(f.time).toFixed(1)},${yScale(a.value).toFixed(1)}` : null;
+      })
+      .filter(Boolean) as string[];
+    return pts.join(' ');
+  };
+
+  const gridAngles = [0, 45, 90, 135, 180];
+  const xTicks = maxDur <= 10
+    ? Array.from({ length: Math.ceil(maxDur) + 1 }, (_, i) => i).filter(t => t <= maxDur)
+    : [0, Math.round(maxDur * 0.25), Math.round(maxDur * 0.5), Math.round(maxDur * 0.75), Math.round(maxDur)];
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" aria-label="角度時系列グラフ">
+      {/* Y grid */}
+      {gridAngles.map(v => (
+        <g key={v}>
+          <line x1={PL} y1={yScale(v)} x2={W - PR} y2={yScale(v)} stroke="#1e293b" strokeWidth="1" />
+          <text x={PL - 4} y={yScale(v)} textAnchor="end" dominantBaseline="middle" fill="#475569" fontSize="9">{v}°</text>
+        </g>
+      ))}
+      {/* X ticks */}
+      {xTicks.map(t => (
+        <text key={t} x={xScale(t)} y={H - 4} textAnchor="middle" fill="#475569" fontSize="9">{t}s</text>
+      ))}
+      {/* Previous line */}
+      {prev && (
+        <polyline
+          points={toPolyline(prev.frames)}
+          fill="none"
+          stroke="#475569"
+          strokeWidth="1.5"
+          strokeDasharray="5,3"
+        />
+      )}
+      {/* Current line */}
+      <polyline
+        points={toPolyline(current.frames)}
+        fill="none"
+        stroke="#34d399"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
 export default function SelfCompare() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
+  const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
+  const videoRef          = useRef<HTMLVideoElement | null>(null);
+
   const [loadingModel, setLoadingModel] = useState(true);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isAnalyzing, setIsAnalyzing]   = useState(false);
+  const [progress, setProgress]         = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const [step, setStep] = useState<Step>('input');
-  const [kataName, setKataName] = useState('');
+  const [step, setStep]           = useState<Step>('input');
+  const [kataName, setKataName]   = useState('');
   const [kataNames, setKataNames] = useState<string[]>([]);
-  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
-  const [currentAngles, setCurrentAngles] = useState<AngleItem[]>([]);
-  const [currentThumb, setCurrentThumb] = useState<string | null>(null);
-  const [currentTs, setCurrentTs] = useState(0);
-  const [prevSnapshot, setPrevSnapshot] = useState<AngleSnapshot | null>(null);
-  const [history, setHistory] = useState<AngleSnapshot[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const [videoUrl, setVideoUrl]   = useState<string | null>(null);
 
-  // モデル初期化
+  const [currentSnapshot, setCurrentSnapshot] = useState<VideoSnapshot | null>(null);
+  const [prevSnapshot, setPrevSnapshot]       = useState<VideoSnapshot | null>(null);
+  const [history, setHistory]                 = useState<VideoSnapshot[]>([]);
+  const [showHistory, setShowHistory]         = useState(false);
+  const [selectedJoint, setSelectedJoint]     = useState<string>(ANGLE_CONFIG[0].key);
+
   useEffect(() => {
     let active = true;
-    let instance: PoseLandmarker | null = null;
     (async () => {
       try {
         const vision = await FilesetResolver.forVisionTasks(WASM_FILE_PATH);
-        instance = await PoseLandmarker.createFromOptions(vision, {
+        const lm = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: MODEL_ASSET_PATH },
-          runningMode: 'IMAGE',
-          numPoses: 1
+          runningMode: 'VIDEO',
+          numPoses: 1,
+          outputSegmentationMasks: false,
         });
-        if (!active) { instance.close(); return; }
-        setLandmarker(instance);
+        if (!active) { lm.close(); return; }
+        poseLandmarkerRef.current = lm;
       } catch (e) {
         if (active) setErrorMessage(e instanceof Error ? e.message : 'モデルの初期化に失敗しました。');
       } finally {
         if (active) setLoadingModel(false);
       }
     })();
-    return () => { active = false; instance?.close(); };
+    return () => { active = false; poseLandmarkerRef.current?.close(); };
   }, []);
 
-  useEffect(() => { setKataNames(getAllKataNames()); }, []);
+  useEffect(() => { setKataNames(getAllVideoKataNames()); }, []);
 
   const handleStartAnalyze = () => {
     if (!kataName.trim()) { setErrorMessage('型名を入力してください。'); return; }
@@ -124,103 +189,119 @@ export default function SelfCompare() {
     setStep('analyze');
   };
 
-  const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !landmarker) return;
+    if (!file) return;
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+    setVideoUrl(URL.createObjectURL(file));
     setErrorMessage(null);
+  };
+
+  const startAnalysis = async () => {
+    const video     = videoRef.current;
+    const landmarker = poseLandmarkerRef.current;
+    if (!video || !landmarker || !videoUrl) return;
+
     setIsAnalyzing(true);
+    setProgress(0);
+    setErrorMessage(null);
+
+    await new Promise<void>((resolve) => {
+      if (video.readyState >= 1 && isFinite(video.duration) && video.duration > 0) { resolve(); return; }
+      const onMeta = () => { if (isFinite(video.duration) && video.duration > 0) resolve(); };
+      video.addEventListener('loadedmetadata', onMeta, { once: true });
+      video.addEventListener('durationchange', onMeta);
+      video.load();
+      setTimeout(() => { video.removeEventListener('durationchange', onMeta); resolve(); }, 10000);
+    });
+
+    const duration = video.duration;
+    if (!duration || !isFinite(duration) || duration <= 0) {
+      setErrorMessage(`動画の長さを取得できませんでした（duration: ${video.duration}）。`);
+      setIsAnalyzing(false);
+      return;
+    }
+
+    video.pause();
+    video.currentTime = 0;
+
+    const totalFrames = Math.floor(duration / FRAME_INTERVAL);
+    let frameIdx = 0;
+    const frames: VideoFrame[] = [];
+
+    const processFrame = () =>
+      new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          video.onseeked = null;
+          reject(new Error(`フレーム${frameIdx}でシークタイムアウト`));
+        }, 5000);
+
+        video.onseeked = () => {
+          clearTimeout(timer);
+          video.onseeked = null;
+          const timestampMs = video.currentTime * 1000;
+          let angles: FrameAngle[] = ANGLE_CONFIG.map(({ key, label }) => ({ key, label, value: null }));
+
+          try {
+            const result = landmarker.detectForVideo(video, timestampMs);
+            angles = buildAngles(result);
+          } catch (_) { /* スキップ */ }
+
+          frames.push({ time: Math.round(video.currentTime * 100) / 100, angles });
+          frameIdx++;
+          setProgress(Math.min(100, Math.round((frameIdx / totalFrames) * 100)));
+          resolve();
+        };
+        video.currentTime = frameIdx * FRAME_INTERVAL;
+      });
 
     try {
-      // 1. フルサイズ読み込み
-      const dataUrl = await new Promise<string>((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result as string);
-        r.onerror = () => rej(new Error('ファイルの読み込みに失敗しました。'));
-        r.readAsDataURL(file);
-      });
-      setImageDataUrl(dataUrl);
-
-      // 2. 解析
-      const img = await new Promise<HTMLImageElement>((res, rej) => {
-        const el = new Image();
-        el.onload = () => res(el);
-        el.onerror = () => rej(new Error('画像の読み込みに失敗しました。'));
-        el.src = dataUrl;
-      });
-      const result = landmarker.detect(img);
-      const angles = buildAngles(result);
-      setCurrentAngles(angles);
-
-      // 3. Canvas 描画
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (canvas && ctx) {
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const du = new (DrawingUtils as any)(ctx);
-        const lm = result.landmarks[0];
-        if (lm) {
-          du.drawConnectors(lm, (PoseLandmarker as any).POSE_CONNECTIONS, { color: '#34d399', lineWidth: 4 });
-          du.drawLandmarks(lm, { color: '#86efac', fillColor: '#16a34a', lineWidth: 2, radius: 3 });
-        }
+      while (frameIdx * FRAME_INTERVAL < duration) {
+        await processFrame();
       }
-
-      // 4. サムネイル生成
-      const thumb = await compressImageToDataUrl(file, 200);
-      setCurrentThumb(thumb);
-      const ts = Date.now();
-      setCurrentTs(ts);
-
-      // 5. 前回スナップを取得してから保存
-      const existing = getSnapshotsByKata(kataName);
-      setPrevSnapshot(existing[0] ?? null);
-
-      saveSnapshot({ id: crypto.randomUUID(), kataName, timestamp: ts, imageDataUrl: thumb, angles });
-      setHistory(getSnapshotsByKata(kataName));
-      setKataNames(getAllKataNames());
-      setStep('compare');
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : '解析に失敗しました。');
-    } finally {
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : '解析中にエラーが発生しました。');
       setIsAnalyzing(false);
+      return;
     }
+
+    const existing = getVideoSnapshotsByKata(kataName);
+    const prev = existing[0] ?? null;
+    const snap: VideoSnapshot = {
+      id: crypto.randomUUID(),
+      kataName,
+      timestamp: Date.now(),
+      duration,
+      frames,
+    };
+
+    saveVideoSnapshot(snap);
+    setPrevSnapshot(prev);
+    setCurrentSnapshot(snap);
+    setHistory(getVideoSnapshotsByKata(kataName));
+    setKataNames(getAllVideoKataNames());
+    setProgress(100);
+    setIsAnalyzing(false);
+    setStep('compare');
   };
 
   const handleDeleteSnapshot = (id: string) => {
-    deleteSnapshot(id);
-    setHistory(getSnapshotsByKata(kataName));
+    deleteVideoSnapshot(id);
+    setHistory(getVideoSnapshotsByKata(kataName));
   };
 
   const handleReset = () => {
     setStep('input');
     setKataName('');
-    setImageDataUrl(null);
-    setCurrentAngles([]);
-    setCurrentThumb(null);
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+    setVideoUrl(null);
+    setCurrentSnapshot(null);
     setPrevSnapshot(null);
     setHistory([]);
     setShowHistory(false);
     setErrorMessage(null);
-    setKataNames(getAllKataNames());
-  };
-
-  const summaryMessages = (): string[] => {
-    if (!prevSnapshot || currentAngles.length === 0) return [];
-    return currentAngles
-      .map(curr => {
-        const prev = prevSnapshot.angles.find(a => a.key === curr.key);
-        if (curr.value == null || prev?.value == null) return null;
-        return { label: curr.label, diff: curr.value - prev.value };
-      })
-      .filter((d): d is { label: string; diff: number } => d !== null)
-      .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff))
-      .slice(0, 2)
-      .map(d =>
-        Math.abs(d.diff) < 0.5
-          ? `${d.label}角度が安定しています`
-          : `${d.label}が前回より${Math.abs(d.diff).toFixed(1)}度${d.diff > 0 ? '深く' : '浅く'}なりました`
-      );
+    setSelectedJoint(ANGLE_CONFIG[0].key);
+    setKataNames(getAllVideoKataNames());
   };
 
   const stepIndex = STEP_LABELS.findIndex(s => s.key === step);
@@ -261,9 +342,7 @@ export default function SelfCompare() {
         })}
       </div>
 
-      {(loadingModel || isAnalyzing) && (
-        <Spinner label={loadingModel ? 'モデル読み込み中...' : '解析中...'} />
-      )}
+      {loadingModel && <Spinner label="モデル読み込み中..." />}
 
       {errorMessage && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/8 px-4 py-3 text-sm text-red-300">
@@ -306,7 +385,7 @@ export default function SelfCompare() {
         </div>
       )}
 
-      {/* ── Step 2: 画像アップロード ── */}
+      {/* ── Step 2: 動画アップロード・解析 ── */}
       {step === 'analyze' && !loadingModel && (
         <div className="space-y-4">
           <div className="flex items-center gap-2.5">
@@ -318,141 +397,129 @@ export default function SelfCompare() {
             </button>
           </div>
 
-          <label className={`flex min-h-[100px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${
-            isAnalyzing
-              ? 'border-slate-800 bg-slate-950/30 opacity-50 cursor-not-allowed'
-              : imageDataUrl
+          {!isAnalyzing && (
+            <label className={`flex min-h-[100px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${
+              videoUrl
                 ? 'border-slate-700 bg-slate-800/40 hover:border-slate-600'
                 : 'border-slate-700 bg-slate-950/40 hover:border-green-500/50 hover:bg-green-500/5'
-          }`}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-slate-500" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="m21 15-5-5L5 21" />
-            </svg>
-            <span className="text-sm text-slate-400">
-              {imageDataUrl ? '別の画像を選択' : 'クリックして画像を選択'}
-            </span>
-            <span className="text-xs text-slate-600">JPG, PNG, HEIC など</span>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange}
-              disabled={isAnalyzing}
-              className="sr-only"
-            />
-          </label>
+            }`}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-slate-500" aria-hidden="true">
+                <rect x="2" y="6" width="14" height="12" rx="2" />
+                <path d="m16 10 6-3v10l-6-3" />
+              </svg>
+              <span className="text-sm text-slate-400">
+                {videoUrl ? '別の動画を選択' : 'クリックして動画を選択'}
+              </span>
+              <span className="text-xs text-slate-600">MP4, MOV, WebM など</span>
+              <input type="file" accept="video/*" onChange={handleFileChange} className="sr-only" />
+            </label>
+          )}
 
-          {imageDataUrl && (
-            <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-black">
-              <img src={imageDataUrl} alt="解析対象" className="block h-auto w-full" />
-              <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+          {videoUrl && !isAnalyzing && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              controls
+              preload="auto"
+              className="w-full rounded-xl border border-slate-800 bg-slate-950"
+              onLoadedMetadata={() => {}}
+            />
+          )}
+
+          {videoUrl && !isAnalyzing && (
+            <button
+              type="button"
+              onClick={() => void startAnalysis()}
+              className="min-h-[44px] w-full rounded-xl bg-green-500 px-6 py-3 text-sm font-semibold text-slate-950 transition-colors hover:bg-green-400 sm:w-auto"
+            >
+              解析開始
+            </button>
+          )}
+
+          {isAnalyzing && (
+            <div className="space-y-2">
+              <Spinner label={`解析中... ${progress}%`} />
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-150"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <p className="text-right text-xs text-slate-500">{progress}%</p>
             </div>
           )}
         </div>
       )}
 
-      {/* ── Step 3: 比較表示 ── */}
-      {step === 'compare' && (
+      {/* ── Step 3: 比較結果 ── */}
+      {step === 'compare' && currentSnapshot && (
         <div className="space-y-5">
-          {/* 今回 vs 前回 サムネイル */}
+
+          {/* メタ情報 */}
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-green-500/25 bg-green-500/5 p-4">
-              <div className="mb-2.5 flex items-center gap-2">
+            <div className="rounded-xl border border-green-500/25 bg-green-500/5 p-3">
+              <div className="mb-1 flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-green-400" />
                 <span className="text-xs font-semibold tracking-wider text-green-400">今回</span>
               </div>
-              {currentThumb && (
-                <img src={currentThumb} alt="今回" className="mb-2 h-20 w-auto rounded-lg object-cover" />
-              )}
-              <div className="text-xs text-slate-500">{formatDate(currentTs)}</div>
+              <div className="text-xs text-slate-400">{formatDate(currentSnapshot.timestamp)}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{currentSnapshot.duration.toFixed(1)}秒 · {currentSnapshot.frames.length}フレーム</div>
             </div>
-            <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-4">
-              <div className="mb-2.5 flex items-center gap-2">
+            <div className="rounded-xl border border-slate-700/60 bg-slate-800/40 p-3">
+              <div className="mb-1 flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-slate-500" />
                 <span className="text-xs font-semibold tracking-wider text-slate-400">前回</span>
               </div>
               {prevSnapshot ? (
                 <>
-                  <img src={prevSnapshot.imageDataUrl} alt="前回" className="mb-2 h-20 w-auto rounded-lg object-cover" />
-                  <div className="text-xs text-slate-500">{formatDate(prevSnapshot.timestamp)}</div>
+                  <div className="text-xs text-slate-400">{formatDate(prevSnapshot.timestamp)}</div>
+                  <div className="text-xs text-slate-500 mt-0.5">{prevSnapshot.duration.toFixed(1)}秒 · {prevSnapshot.frames.length}フレーム</div>
                 </>
               ) : (
-                <div className="flex min-h-20 items-center text-sm text-slate-500">
-                  初回記録です。<br />次回から比較できます
-                </div>
+                <div className="text-sm text-slate-500 mt-1">初回記録。次回から比較できます</div>
               )}
             </div>
           </div>
 
-          {/* 角度比較テーブル */}
-          {prevSnapshot && (
-            <>
-              <div className="overflow-hidden rounded-xl border border-slate-800">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-800 bg-slate-800/50">
-                      <th className="px-4 py-2.5 text-left text-xs font-medium text-slate-400">関節</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-green-400">今回</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-400">前回</th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-slate-400">差分</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {currentAngles.map(curr => {
-                      const prev = prevSnapshot.angles.find(a => a.key === curr.key);
-                      const diff = curr.value != null && prev?.value != null ? curr.value - prev.value : null;
-                      const significant = diff != null && Math.abs(diff) >= 5;
-                      const improved = diff != null && diff > 0;
-                      return (
-                        <tr
-                          key={curr.key}
-                          className={`border-b border-slate-800/60 ${
-                            significant
-                              ? improved
-                                ? 'bg-green-500/5'
-                                : 'bg-amber-500/5'
-                              : ''
-                          }`}
-                        >
-                          <td className={`px-4 py-2.5 text-slate-300 ${significant ? (improved ? 'border-l-2 border-l-green-500' : 'border-l-2 border-l-amber-400') : ''}`}>
-                            {curr.label}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-medium text-cyan-300">
-                            {curr.value != null ? `${curr.value.toFixed(1)}°` : '--'}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-slate-400">
-                            {prev?.value != null ? `${prev.value.toFixed(1)}°` : '--'}
-                          </td>
-                          <td className={`px-4 py-2.5 text-right font-medium ${
-                            diff == null
-                              ? 'text-slate-600'
-                              : significant
-                                ? improved ? 'text-green-400' : 'text-amber-400'
-                                : 'text-slate-500'
-                          }`}>
-                            {diff == null ? '--' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}°`}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+          {/* 関節セレクタ */}
+          <div>
+            <div className="mb-2 text-xs text-slate-400">関節を選択</div>
+            <div className="flex flex-wrap gap-1.5">
+              {ANGLE_CONFIG.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSelectedJoint(key)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors min-h-[32px] ${
+                    selectedJoint === key
+                      ? 'bg-green-500 text-slate-950'
+                      : 'border border-slate-700 text-slate-400 hover:border-slate-600 hover:bg-slate-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-              {/* サマリーメッセージ */}
-              {summaryMessages().length > 0 && (
-                <div className="space-y-1.5 rounded-xl border border-green-500/15 bg-green-500/5 p-4">
-                  {summaryMessages().map((msg, i) => (
-                    <p key={i} className="text-sm text-green-300 flex items-start gap-2">
-                      <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-green-400 mt-1.5" />
-                      {msg}
-                    </p>
-                  ))}
-                </div>
+          {/* グラフ */}
+          <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+            <div className="mb-2 flex items-center gap-4 text-xs">
+              <span className="flex items-center gap-1.5 text-green-400">
+                <span className="inline-block h-0.5 w-6 bg-green-400" />今回
+              </span>
+              {prevSnapshot && (
+                <span className="flex items-center gap-1.5 text-slate-500">
+                  <svg width="24" height="4" className="inline-block"><line x1="0" y1="2" x2="24" y2="2" stroke="#475569" strokeWidth="1.5" strokeDasharray="5,3" /></svg>
+                  前回
+                </span>
               )}
-            </>
-          )}
+            </div>
+            <AngleChart
+              current={currentSnapshot}
+              prev={prevSnapshot}
+              angleKey={selectedJoint}
+            />
+          </div>
 
           <button
             type="button"
@@ -462,7 +529,7 @@ export default function SelfCompare() {
             別の型を比較
           </button>
 
-          {/* 過去の記録トグル */}
+          {/* 過去の記録 */}
           <div>
             <button
               type="button"
@@ -477,31 +544,24 @@ export default function SelfCompare() {
 
             {showHistory && (
               <div className="mt-3 space-y-2">
-                {history.slice(0, 5).map(snap => {
-                  const summary = snap.angles
-                    .filter(a => a.value != null)
-                    .slice(0, 4)
-                    .map(a => `${a.label}: ${(a.value as number).toFixed(0)}°`)
-                    .join(' · ');
-                  return (
-                    <div
-                      key={snap.id}
-                      className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-800/30 px-4 py-3"
-                    >
-                      <div>
-                        <div className="text-sm text-slate-200">{formatDate(snap.timestamp)}</div>
-                        <div className="text-xs text-slate-500 mt-0.5">{summary}</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSnapshot(snap.id)}
-                        className="min-h-[36px] rounded-lg border border-red-500/30 px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10"
-                      >
-                        削除
-                      </button>
+                {history.slice(0, 5).map(snap => (
+                  <div
+                    key={snap.id}
+                    className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-800/30 px-4 py-3"
+                  >
+                    <div>
+                      <div className="text-sm text-slate-200">{formatDate(snap.timestamp)}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">{snap.duration.toFixed(1)}秒 · {snap.frames.length}フレーム</div>
                     </div>
-                  );
-                })}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSnapshot(snap.id)}
+                      className="min-h-[36px] rounded-lg border border-red-500/30 px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+                    >
+                      削除
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -10,9 +10,6 @@ const MODEL_ASSET_PATH =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task';
 
 const FRAME_INTERVAL = 1 / 30;
-
-// landmark 0-22: 上半身（頭・肩・腕・手首・腰）
-// landmark 23-32: 下半身（膝・足首・踵・つま先）
 const UPPER_BODY_MAX = 22;
 
 type BudoMode = 'no-weapon' | 'weapon';
@@ -34,15 +31,15 @@ function Spinner({ label }: { label: string }) {
 }
 
 export default function VideoAnalyzer() {
-  const videoRef    = useRef<HTMLVideoElement | null>(null);
-  const canvasRef   = useRef<HTMLCanvasElement | null>(null);
+  const videoRef          = useRef<HTMLVideoElement | null>(null);
+  const canvasRef         = useRef<HTMLCanvasElement | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
   const storedFramesRef   = useRef<StoredFrame[]>([]);
-  const rafRef      = useRef<number | null>(null);
-  const showTrailRef = useRef(true);
-  const modeRef     = useRef<BudoMode>('no-weapon');
+  const rafRef            = useRef<number | null>(null);
+  const showTrailRef      = useRef(true);
+  const modeRef           = useRef<BudoMode>('no-weapon');
 
-  const [videoUrl, setVideoUrl]       = useState<string | null>(null);
+  const [videoUrl, setVideoUrl]         = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState(true);
   const [isAnalyzing, setIsAnalyzing]   = useState(false);
   const [progress, setProgress]         = useState(0);
@@ -79,7 +76,6 @@ export default function VideoAnalyzer() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [done]);
 
-  // モデル初期化
   useEffect(() => {
     let active = true;
     const init = async () => {
@@ -88,7 +84,8 @@ export default function VideoAnalyzer() {
         const landmarker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: MODEL_ASSET_PATH },
           runningMode: 'VIDEO',
-          numPoses: 1
+          numPoses: 1,
+          outputSegmentationMasks: false,
         });
         if (!active) { landmarker.close(); return; }
         poseLandmarkerRef.current = landmarker;
@@ -106,16 +103,16 @@ export default function VideoAnalyzer() {
     };
   }, []);
 
-  // ── 描画ヘルパー ─────────────────────────────────────
+  // ── 描画ヘルパー ──────────────────────────────────────
 
-const drawFrame = (
+  const drawFrame = (
     ctx: CanvasRenderingContext2D,
     w: number,
     h: number,
     landmarks: LandmarkPoint[] | null,
     frameIdx: number,
     budoMode: BudoMode,
-    showTrailFlag: boolean
+    showTrailFlag: boolean,
   ) => {
     ctx.clearRect(0, 0, w, h);
 
@@ -125,14 +122,12 @@ const drawFrame = (
       const upperConns = allConnections.filter(c => c.start <= UPPER_BODY_MAX && c.end <= UPPER_BODY_MAX);
       const lowerConns = allConnections.filter(c => c.start > UPPER_BODY_MAX || c.end > UPPER_BODY_MAX);
 
-      // 上半身: 両モード共通で通常表示
       du.drawConnectors(landmarks, upperConns, { color: '#34d399', lineWidth: 3 });
       du.drawLandmarks(
         landmarks.slice(0, UPPER_BODY_MAX + 1),
         { color: '#86efac', fillColor: '#16a34a', lineWidth: 2, radius: 3 }
       );
 
-      // 下半身: 武器なし→通常、武器あり→半透明（袴で精度低）
       const lowerOpacity = budoMode === 'weapon' ? 0.4 : 1.0;
       du.drawConnectors(landmarks, lowerConns, {
         color: `rgba(52,211,153,${lowerOpacity})`, lineWidth: budoMode === 'weapon' ? 2 : 3
@@ -221,8 +216,8 @@ const drawFrame = (
   // ── 解析 ─────────────────────────────────────────────
 
   const startAnalysis = async () => {
-    const video    = videoRef.current;
-    const canvas   = canvasRef.current;
+    const video      = videoRef.current;
+    const canvas     = canvasRef.current;
     const landmarker = poseLandmarkerRef.current;
     if (!video || !canvas || !landmarker) return;
 
@@ -273,6 +268,7 @@ const drawFrame = (
           video.onseeked = null;
           const timestampMs = video.currentTime * 1000;
           let landmarks: LandmarkPoint[] | null = null;
+
           try {
             const result = landmarker.detectForVideo(video, timestampMs);
             landmarks = result.landmarks[0] ?? null;
@@ -307,7 +303,7 @@ const drawFrame = (
   return (
     <section className="space-y-5 rounded-2xl border border-slate-800 bg-slate-900 p-5 text-slate-100 shadow-2xl shadow-black/30 sm:p-6">
 
-      {/* 武道種別選択（SegmentedControl風） */}
+      {/* 武道種別選択 */}
       <div>
         <span className="mb-2.5 block text-sm font-medium text-slate-300">武道種別</span>
         <div className="flex rounded-xl border border-slate-700 bg-slate-950/60 p-1 gap-1">
@@ -341,7 +337,7 @@ const drawFrame = (
             ? 'border-slate-700 bg-slate-800/40 hover:border-slate-600'
             : 'border-slate-700 bg-slate-950/40 hover:border-green-500/50 hover:bg-green-500/5'
         }`}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" className="h-6 w-6 text-slate-500" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-slate-500" aria-hidden="true">
             <rect x="2" y="6" width="14" height="12" rx="2" />
             <path d="m16 10 6-3v10l-6-3" />
           </svg>

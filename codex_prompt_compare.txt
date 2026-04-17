@@ -1,0 +1,100 @@
+既存の src/components/PoseAnalyzer.tsx を参考に、以下の新規ファイルを2つ作成してください。
+
+=== 参考: PoseAnalyzer.tsx のアーキテクチャ ===
+- WASM: https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm
+- Model: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task
+- runningMode: 'IMAGE'
+- 8関節角度を計算（左肘・右肘・左膝・右膝・左肩・右肩・左股関節・右股関節）
+- ANGLE_CONFIG は points: [aIndex, bIndex, cIndex] で定義
+- calculateAngle(a, b, c) で arccos ベースの角度計算
+- DrawingUtils を使って骨格描画
+
+=== ファイル1: src/lib/storage.ts ===
+
+型スナップショットを localStorage に保存・取得するユーティリティ。
+
+型定義:
+```typescript
+type AngleSnapshot = {
+  id: string;           // crypto.randomUUID()
+  kataName: string;     // 型名（例: "平安初段", "居合・正座の部"）
+  timestamp: number;    // Date.now()
+  imageDataUrl: string; // 縮小済みサムネイル（最大200px幅）
+  angles: {
+    key: string;
+    label: string;
+    value: number | null;
+  }[];
+};
+```
+
+エクスポートする関数:
+1. `saveSnapshot(snapshot: AngleSnapshot): void`
+   - localStorage の "formsensei_snapshots" キーに JSON 配列で保存
+   - 同じ kataName のスナップショットは最大10件まで保持（古い順に削除）
+   - 全体の件数上限は50件
+
+2. `getSnapshotsByKata(kataName: string): AngleSnapshot[]`
+   - 指定した kataName のスナップショットを timestamp 降順で返す
+
+3. `getAllKataNames(): string[]`
+   - 保存済みの kataName 一覧を重複なしで返す（最終更新順）
+
+4. `deleteSnapshot(id: string): void`
+
+5. `compressImageToDataUrl(file: File, maxWidth?: number): Promise<string>`
+   - Canvas を使って画像を maxWidth(default: 200)px に縮小し dataURL を返す
+
+
+=== ファイル2: src/components/SelfCompare.tsx ===
+
+React コンポーネント（client:only 用、SSR不要）。
+「過去の自分との比較」機能のメインUI。
+
+## 画面フロー
+
+### Step 1: 型名入力
+- テキスト入力（placeholder: "型名を入力 例: 平安初段"）
+- 過去に保存した型名一覧を datalist でサジェスト（storage.ts の getAllKataNames() から取得）
+- 「解析開始」ボタンで Step 2 へ
+
+### Step 2: 画像アップロード + 解析
+- 入力した型名を表示（変更ボタン付き）
+- 画像ファイル選択（input type=file, accept=image/*）
+- MediaPipe で骨格検出 + 8関節角度計算（PoseAnalyzer.tsx と同じロジック）
+- 解析完了後:
+  - compressImageToDataUrl でサムネイル生成
+  - saveSnapshot で自動保存
+  - Step 3 へ
+
+### Step 3: 比較表示
+- 「今回」と「前回」の2列レイアウト
+- 各列にサムネイル画像（小サイズ）＋日時ラベルを表示
+- 前回データがない場合は「初回記録です！次回から比較できます」メッセージ
+- 前回データがある場合:
+  - 8関節の角度比較テーブルを表示
+  - 各行: [関節名] [今回の角度°] [前回の角度°] [差分 △±X.X°]
+  - 差分が ±5° 以上の項目はハイライト
+    - 改善（値が大きくなった = より深くなった）: 緑テキスト + 上矢印
+    - 差異あり: 黄色テキスト + 矢印
+    - ±5° 未満: グレー（変化なし）
+  - サマリーメッセージ: 「右膝が前回より8.3度深くなりました」「左肩角度が安定しています」
+    （変化が大きい上位2件を日本語で出力）
+- 「別の型を比較」ボタンで Step 1 に戻る
+- 「過去の記録を見る」トグル:
+  - この型の過去スナップショット一覧（最大5件）
+  - 各行: 日時 + 角度サマリー（主要4角度）+ 削除ボタン
+
+## スタイル
+- PoseAnalyzer.tsx / VideoAnalyzer.tsx と統一感のあるデザイン
+- ダーク系: bg-gray-900, text-white
+- アクセントカラー: green-400/500
+- 比較テーブルのハイライトは bg-green-900/30 border-green-500/30 (改善) / bg-yellow-900/30 border-yellow-500/30 (差異)
+- Tailwind CSS のみ（追加ライブラリ不要）
+
+## 注意事項
+- MediaPipe の初期化とモデル読み込みは PoseAnalyzer.tsx と同じ設定
+- ローディングスピナーは PoseAnalyzer.tsx と同じ <Spinner> コンポーネントを再実装（共通化は不要）
+- 型エラー回避に as any を使用可
+- compressImageToDataUrl は storage.ts から import して使う
+- localStorage 操作はすべて storage.ts 経由で行う（コンポーネントに直接書かない）
