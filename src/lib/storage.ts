@@ -97,14 +97,20 @@ export function compressImageToDataUrl(file: File, maxWidth = 200): Promise<stri
 
 // ── Video snapshots ───────────────────────────────────
 
+export type LandmarkPoint = { x: number; y: number; z?: number };
 export type FrameAngle = { key: string; label: string; value: number | null };
-export type VideoFrame = { time: number; angles: FrameAngle[] };
+export type VideoFrame = {
+  time: number;
+  angles: FrameAngle[];
+  landmarks: LandmarkPoint[] | null;
+};
 export type VideoSnapshot = {
   id: string;
   kataName: string;
   timestamp: number;
   duration: number;
   frames: VideoFrame[];
+  thumbnailDataUrl?: string;
 };
 
 const VIDEO_STORAGE_KEY = 'formsensei_video_snapshots';
@@ -143,6 +149,13 @@ export function saveVideoSnapshot(snapshot: VideoSnapshot): void {
   persistVideo(snapshots);
 }
 
+export function updateVideoSnapshotThumbnail(id: string, thumbnailDataUrl: string): void {
+  const snapshots = loadVideo().map(snapshot =>
+    snapshot.id === id ? { ...snapshot, thumbnailDataUrl } : snapshot,
+  );
+  persistVideo(snapshots);
+}
+
 export function getVideoSnapshotsByKata(kataName: string): VideoSnapshot[] {
   return loadVideo()
     .filter(s => s.kataName === kataName)
@@ -164,4 +177,100 @@ export function getAllVideoKataNames(): string[] {
 
 export function deleteVideoSnapshot(id: string): void {
   persistVideo(loadVideo().filter(s => s.id !== id));
+}
+
+// ── Video blob storage (IndexedDB) ────────────────────────────────────
+const VIDEO_BLOB_DB = 'formsensei_videoblobs';
+const BLOB_STORE = 'blobs';
+
+function openBlobDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(VIDEO_BLOB_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(BLOB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function saveVideoBlob(id: string, blob: Blob): Promise<void> {
+  const db = await openBlobDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(BLOB_STORE, 'readwrite');
+    tx.objectStore(BLOB_STORE).put(blob, id);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+export async function getVideoBlob(id: string): Promise<Blob | null> {
+  const db = await openBlobDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(BLOB_STORE, 'readonly');
+    const req = tx.objectStore(BLOB_STORE).get(id);
+    req.onsuccess = () => { db.close(); resolve((req.result as Blob) ?? null); };
+    req.onerror = () => { db.close(); reject(req.error); };
+  });
+}
+
+export async function deleteVideoBlob(id: string): Promise<void> {
+  const db = await openBlobDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(BLOB_STORE, 'readwrite');
+    tx.objectStore(BLOB_STORE).delete(id);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+export function createVideoThumbnailDataUrl(blob: Blob, seekTime = 0.1, maxWidth = 240): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(blob);
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('動画サムネイル生成がタイムアウトしました。'));
+    }, 4000);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      URL.revokeObjectURL(url);
+      video.removeAttribute('src');
+      video.load();
+    };
+
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+
+    video.onloadedmetadata = () => {
+      const targetTime = Math.min(Math.max(seekTime, 0), Math.max((video.duration || 0) - 0.05, 0));
+      video.currentTime = targetTime;
+    };
+
+    video.onseeked = () => {
+      const width = video.videoWidth || 320;
+      const height = video.videoHeight || 180;
+      const scale = Math.min(1, maxWidth / width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        cleanup();
+        reject(new Error('Canvas context unavailable'));
+        return;
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      cleanup();
+      resolve(dataUrl);
+    };
+
+    video.onerror = () => {
+      cleanup();
+      reject(new Error('動画サムネイルの生成に失敗しました。'));
+    };
+
+    video.src = url;
+  });
 }

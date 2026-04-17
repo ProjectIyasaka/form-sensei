@@ -4,16 +4,29 @@ import {
   FilesetResolver,
   PoseLandmarker
 } from '@mediapipe/tasks-vision';
+import {
+  saveVideoSnapshot,
+  saveVideoBlob,
+  createVideoThumbnailDataUrl,
+  updateVideoSnapshotThumbnail,
+  type LandmarkPoint,
+  type VideoFrame,
+  type VideoSnapshot,
+} from '../lib/storage';
+import {
+  ANALYSIS_INTERVAL,
+  ANGLE_CONFIG,
+  FRAME_INTERVAL,
+  buildAngles,
+  normalizeLandmarks,
+} from '../lib/video-analysis';
 
 const WASM_FILE_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 const MODEL_ASSET_PATH =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task';
-
-const FRAME_INTERVAL = 1 / 30;
 const UPPER_BODY_MAX = 22;
 
 type BudoMode = 'no-weapon' | 'weapon';
-type LandmarkPoint = { x: number; y: number; z?: number };
 type StoredFrame = { time: number; landmarks: LandmarkPoint[] | null };
 
 const BUDO_MODES: { value: BudoMode; label: string; sub: string }[] = [
@@ -35,10 +48,12 @@ export default function VideoAnalyzer() {
   const canvasRef         = useRef<HTMLCanvasElement | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
   const storedFramesRef   = useRef<StoredFrame[]>([]);
+  const videoFileRef      = useRef<File | null>(null);
   const rafRef            = useRef<number | null>(null);
   const showTrailRef      = useRef(true);
   const modeRef           = useRef<BudoMode>('no-weapon');
 
+  const [kataName, setKataName]         = useState('');
   const [videoUrl, setVideoUrl]         = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState(true);
   const [isAnalyzing, setIsAnalyzing]   = useState(false);
@@ -48,6 +63,7 @@ export default function VideoAnalyzer() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [mode, setMode]                 = useState<BudoMode>('no-weapon');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [savedSnapshotId, setSavedSnapshotId] = useState<string | null>(null);
 
   useEffect(() => { showTrailRef.current = showTrail; }, [showTrail]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
@@ -202,12 +218,14 @@ export default function VideoAnalyzer() {
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    videoFileRef.current = file;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     storedFramesRef.current = [];
     setVideoUrl(URL.createObjectURL(file));
     setDone(false);
     setProgress(0);
+    setSavedSnapshotId(null);
     setErrorMessage(null);
     const canvas = canvasRef.current;
     if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
@@ -220,12 +238,17 @@ export default function VideoAnalyzer() {
     const canvas     = canvasRef.current;
     const landmarker = poseLandmarkerRef.current;
     if (!video || !canvas || !landmarker) return;
+    if (!kataName.trim()) {
+      setErrorMessage('自己比較に使うため、先に型名を入力してください。');
+      return;
+    }
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     storedFramesRef.current = [];
     setIsAnalyzing(true);
     setDone(false);
     setProgress(0);
+    setSavedSnapshotId(null);
     setErrorMessage(null);
 
     await new Promise<void>((resolve) => {
@@ -252,44 +275,82 @@ export default function VideoAnalyzer() {
     video.pause();
     video.currentTime = 0;
 
-    const totalFrames = Math.floor(duration / FRAME_INTERVAL);
+    const totalFrames = Math.max(1, Math.ceil(duration / ANALYSIS_INTERVAL));
     let frameIdx = 0;
     const currentMode = modeRef.current;
+    const analysisFrames: VideoFrame[] = [];
 
     const processFrame = () =>
       new Promise<void>((resolve, reject) => {
+        const targetTime = Math.min(frameIdx * ANALYSIS_INTERVAL, Math.max(duration - 0.001, 0));
         const timer = setTimeout(() => {
           video.onseeked = null;
           reject(new Error(`フレーム${frameIdx}でシークタイムアウト`));
         }, 5000);
 
-        video.onseeked = () => {
+        const handleSeeked = () => {
           clearTimeout(timer);
           video.onseeked = null;
           const timestampMs = video.currentTime * 1000;
           let landmarks: LandmarkPoint[] | null = null;
+          let angles: VideoFrame['angles'] = ANGLE_CONFIG.map(({ key, label }) => ({ key, label, value: null }));
 
           try {
             const result = landmarker.detectForVideo(video, timestampMs);
-            landmarks = result.landmarks[0] ?? null;
+            landmarks = normalizeLandmarks(result.landmarks[0] ?? null);
+            angles = buildAngles(result);
           } catch (_) { /* スキップ */ }
 
           storedFramesRef.current.push({ time: video.currentTime, landmarks });
+          analysisFrames.push({
+            time: Math.round(video.currentTime * 100) / 100,
+            angles,
+            landmarks,
+          });
           drawFrame(ctx, canvas.width, canvas.height, landmarks, storedFramesRef.current.length - 1, currentMode, true);
 
           frameIdx++;
           setProgress(Math.min(100, Math.round((frameIdx / totalFrames) * 100)));
           resolve();
         };
-        video.currentTime = frameIdx * FRAME_INTERVAL;
+        video.onseeked = handleSeeked;
+        if (Math.abs(video.currentTime - targetTime) < 0.0005) {
+          handleSeeked();
+          return;
+        }
+        video.currentTime = targetTime;
       });
 
     try {
-      while (frameIdx * FRAME_INTERVAL < duration) {
+      while (frameIdx < totalFrames) {
         await processFrame();
       }
     } catch (e) {
       setErrorMessage(e instanceof Error ? e.message : '解析中にエラーが発生しました。');
+      setIsAnalyzing(false);
+      return;
+    }
+
+    const snapshot: VideoSnapshot = {
+      id: crypto.randomUUID(),
+      kataName: kataName.trim(),
+      timestamp: Date.now(),
+      duration,
+      frames: analysisFrames,
+    };
+
+    try {
+      saveVideoSnapshot(snapshot);
+      if (videoFileRef.current) {
+        const file = videoFileRef.current;
+        void saveVideoBlob(snapshot.id, file);
+        void createVideoThumbnailDataUrl(file)
+          .then(thumbnailDataUrl => updateVideoSnapshotThumbnail(snapshot.id, thumbnailDataUrl))
+          .catch(() => {});
+      }
+      setSavedSnapshotId(snapshot.id);
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? `保存に失敗しました: ${e.message}` : '保存に失敗しました。');
     }
 
     setProgress(100);
@@ -323,10 +384,27 @@ export default function VideoAnalyzer() {
           ))}
         </div>
         {mode === 'weapon' && (
-          <p className="mt-2 text-xs text-cyan-400/80">
-            上半身・手首軌跡に特化して解析します。下半身は半透明で表示されます。
-          </p>
+          <div className="mt-2">
+            <p className="text-xs text-cyan-400/80">
+              武器術では上半身と手首の動きを見やすくするため、下半身を半透明で表示します。武器先端の認識は今後別モデルで対応します。
+            </p>
+          </div>
         )}
+      </div>
+
+      <div>
+        <label htmlFor="video-kata-name" className="mb-2.5 block text-sm font-medium text-slate-300">型名</label>
+        <input
+          id="video-kata-name"
+          type="text"
+          value={kataName}
+          onChange={e => setKataName(e.target.value)}
+          placeholder="例: 平安初段"
+          className="w-full rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-100 placeholder-slate-500 transition-colors focus:border-green-500 focus:bg-slate-800 focus:outline-none"
+        />
+        <p className="mt-1.5 text-xs text-slate-500">
+          解析結果はこの型名で保存され、自己比較から再利用されます。
+        </p>
       </div>
 
       {/* 動画ファイルアップロード */}
@@ -412,6 +490,25 @@ export default function VideoAnalyzer() {
       {/* 解析完了後のコントロール */}
       {done && (
         <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-slate-200">解析結果を保存済み</p>
+              <p className="text-xs text-slate-500">自己比較ではこの保存データをそのまま使います。</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const target = kataName.trim()
+                  ? `/compare?kata=${encodeURIComponent(kataName.trim())}&current=${encodeURIComponent(savedSnapshotId ?? '')}`
+                  : '/compare';
+                window.location.href = target;
+              }}
+              disabled={!savedSnapshotId}
+              className="min-h-[40px] rounded-xl bg-green-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-green-400 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              自己比較で開く
+            </button>
+          </div>
 
           {/* 再生速度 */}
           <div className="flex flex-wrap items-center gap-2">
