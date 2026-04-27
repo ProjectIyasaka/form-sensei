@@ -1,65 +1,97 @@
 """
-動画からフレームを抽出してアノテーション用画像を生成するスクリプト。
+動画からアノテーション用フレームを抽出するスクリプト。
+OpenCV を使用（ffmpeg不要）。ブレたフレームを自動除外。
+
+事前準備:
+  pip install opencv-python
 
 使い方:
-  python scripts/extract_frames.py --input videos/
-  python scripts/extract_frames.py --input videos/iaido.mp4 --fps 2 --max 300
+  python scripts/extract_frames.py --input videos/iaido.mp4
+  python scripts/extract_frames.py --input videos/iaido.mp4 --dest val
+  python scripts/extract_frames.py --input videos/ --fps 2 --max 100
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
+OUTPUT_SIZE = (640, 360)
 
-def check_ffmpeg():
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-    except FileNotFoundError:
-        print("エラー: ffmpeg が見つかりません。")
-        print("インストール: https://ffmpeg.org/download.html")
-        sys.exit(1)
 
-def extract_frames(video_path: Path, out_dir: Path, fps: float, max_frames: int) -> int:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = video_path.stem.replace(" ", "_")
-    pattern = out_dir / f"{stem}_%04d.jpg"
+def sharpness(frame: np.ndarray) -> float:
+    """ラプラシアン分散によるシャープネス計算（高いほど鮮明）"""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return cv2.Laplacian(gray, cv2.CV_64F).var()
 
-    cmd = [
-        "ffmpeg", "-i", str(video_path),
-        "-vf", f"fps={fps},scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
-        "-q:v", "2",         # JPEG品質（低いほど高品質, 2=高品質）
-        "-frames:v", str(max_frames),
-        str(pattern),
-        "-y", "-loglevel", "error",
-    ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"  警告: {video_path.name} の抽出でエラー: {result.stderr.strip()}")
+def extract_frames(
+    video_path: Path,
+    out_dir: Path,
+    fps: float,
+    max_frames: int,
+    min_sharpness: float,
+) -> int:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        print(f"  警告: {video_path.name} を開けません")
         return 0
 
-    extracted = list(out_dir.glob(f"{stem}_*.jpg"))
-    return len(extracted)
+    src_fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    interval  = max(1, int(src_fps / fps))
+    stem      = video_path.stem.replace(" ", "_")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    frame_idx = 0
+
+    while saved < max_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_idx % interval == 0:
+            score = sharpness(frame)
+            if score >= min_sharpness:
+                resized  = cv2.resize(frame, OUTPUT_SIZE)
+                out_path = out_dir / f"{stem}_{frame_idx:06d}.jpg"
+                cv2.imwrite(str(out_path), resized, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                saved += 1
+
+        frame_idx += 1
+
+    cap.release()
+    return saved
+
 
 def main():
     parser = argparse.ArgumentParser(description="動画からアノテーション用フレームを抽出")
-    parser.add_argument("--input",  required=True, help="動画ファイルまたは動画が入ったディレクトリ")
-    parser.add_argument("--output", default="dataset/images", help="出力ディレクトリ（デフォルト: dataset/images）")
-    parser.add_argument("--fps",    type=float, default=2.0, help="抽出フレームレート（デフォルト: 2fps）")
-    parser.add_argument("--max",    type=int,   default=500, help="1動画あたりの最大フレーム数（デフォルト: 500）")
+    parser.add_argument("--input",         required=True, help="動画ファイルまたはディレクトリ")
+    parser.add_argument("--dest",          default="train", choices=["train", "val"],
+                        help="出力先 train or val（デフォルト: train）")
+    parser.add_argument("--fps",           type=float, default=2.0,  help="抽出fps（デフォルト: 2）")
+    parser.add_argument("--max",           type=int,   default=200,  help="1動画あたり最大フレーム数")
+    parser.add_argument("--min-sharpness", type=float, default=50.0, help="最低シャープネス（低いほど緩い, デフォルト: 50）")
+    parser.add_argument("--dataset",       default="dataset",        help="データセットルート")
     args = parser.parse_args()
 
-    check_ffmpeg()
+    try:
+        import cv2  # noqa: F401
+    except ImportError:
+        print("エラー: opencv-python が見つかりません。")
+        print("  pip install opencv-python")
+        sys.exit(1)
 
     input_path = Path(args.input)
-    out_dir = Path(args.output)
+    out_dir    = Path(args.dataset) / "images" / args.dest
 
     if input_path.is_file():
         videos = [input_path] if input_path.suffix.lower() in VIDEO_EXTS else []
     elif input_path.is_dir():
-        videos = [p for p in input_path.rglob("*") if p.suffix.lower() in VIDEO_EXTS]
+        videos = sorted(p for p in input_path.rglob("*") if p.suffix.lower() in VIDEO_EXTS)
     else:
         print(f"エラー: {args.input} が見つかりません")
         sys.exit(1)
@@ -68,25 +100,27 @@ def main():
         print(f"動画ファイルが見つかりません: {args.input}")
         sys.exit(1)
 
-    print(f"動画: {len(videos)} 件 / fps: {args.fps} / 最大フレーム: {args.max}枚/動画")
-    print(f"出力先: {out_dir.resolve()}")
+    print(f"動画: {len(videos)} 件 / fps: {args.fps} / 出力先: {out_dir}")
+    print(f"シャープネスフィルタ: {args.min_sharpness}以上のフレームのみ抽出")
     print()
 
     total = 0
-    for i, video in enumerate(sorted(videos), 1):
-        print(f"[{i}/{len(videos)}] {video.name} を処理中...", end=" ", flush=True)
-        n = extract_frames(video, out_dir, args.fps, args.max)
-        print(f"{n} フレーム抽出")
+    for i, video in enumerate(videos, 1):
+        print(f"[{i}/{len(videos)}] {video.name} ...", end=" ", flush=True)
+        n = extract_frames(video, out_dir, args.fps, args.max, args.min_sharpness)
+        print(f"{n} フレーム")
         total += n
 
     print(f"\n完了: 合計 {total} 枚 → {out_dir.resolve()}")
     print()
     print("次のステップ:")
-    print("  1. Roboflow (https://roboflow.com) にアップロードしてバウンディングボックスをアノテーション")
-    print("     または")
-    print("     Label Studio (pip install label-studio) でローカルアノテーション")
-    print("  2. YOLO形式でエクスポート")
-    print("  3. python scripts/train_rtdetr.py で学習開始")
+    print(f"  1. labelImg を起動してアノテーション:")
+    print(f"       labelImg {out_dir} dataset/classes.txt")
+    print(f"     Save Dir: dataset/labels/{args.dest}")
+    print()
+    print("  2. 学習:")
+    print("       python scripts/train_rtdetr.py --epochs 100 --batch 4")
+
 
 if __name__ == "__main__":
     main()
