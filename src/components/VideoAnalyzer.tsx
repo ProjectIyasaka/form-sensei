@@ -20,6 +20,13 @@ import {
   buildAngles,
   normalizeLandmarks,
 } from '../lib/video-analysis';
+import {
+  estimateWeaponTip,
+  drawWeaponTrail,
+  drawWeaponTip,
+  type WeaponTipPoint,
+  type WeaponConfig,
+} from '../lib/weapon-tracking';
 
 const WASM_FILE_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 const MODEL_ASSET_PATH =
@@ -52,6 +59,9 @@ export default function VideoAnalyzer() {
   const rafRef            = useRef<number | null>(null);
   const showTrailRef      = useRef(true);
   const modeRef           = useRef<BudoMode>('no-weapon');
+  const weaponTipsRef     = useRef<WeaponTipPoint[]>([]);
+  const DEFAULT_WEAPON_CONFIG: WeaponConfig = { lengthMultiplier: 2.0, dominantHand: 'auto', trailColor: '#f59e0b', trailWidth: 3, trailFade: true };
+  const weaponConfigRef   = useRef<WeaponConfig>(DEFAULT_WEAPON_CONFIG);
 
   const [kataName, setKataName]         = useState('');
   const [videoUrl, setVideoUrl]         = useState<string | null>(null);
@@ -62,11 +72,13 @@ export default function VideoAnalyzer() {
   const [showTrail, setShowTrail]       = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [mode, setMode]                 = useState<BudoMode>('no-weapon');
+  const [weaponConfig, setWeaponConfig] = useState<WeaponConfig>({ lengthMultiplier: 2.0, dominantHand: 'auto', trailColor: '#f59e0b', trailWidth: 3, trailFade: true });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savedSnapshotId, setSavedSnapshotId] = useState<string | null>(null);
 
   useEffect(() => { showTrailRef.current = showTrail; }, [showTrail]);
   useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { weaponConfigRef.current = weaponConfig; }, [weaponConfig]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -206,6 +218,11 @@ export default function VideoAnalyzer() {
         const ctx = canvas.getContext('2d');
         if (ctx && frame) {
           drawFrame(ctx, canvas.width, canvas.height, frame.landmarks, idx, modeRef.current, showTrailRef.current);
+          if (modeRef.current === 'weapon') {
+            drawWeaponTrail(ctx, weaponTipsRef.current, video.currentTime, weaponConfigRef.current, canvas.width, canvas.height);
+            const latestTip = [...weaponTipsRef.current].filter(p => p.time <= video.currentTime).at(-1) ?? null;
+            drawWeaponTip(ctx, latestTip, weaponConfigRef.current, canvas.width, canvas.height);
+          }
         }
       }
       rafRef.current = requestAnimationFrame(loop);
@@ -222,6 +239,7 @@ export default function VideoAnalyzer() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     storedFramesRef.current = [];
+    weaponTipsRef.current = [];
     setVideoUrl(URL.createObjectURL(file));
     setDone(false);
     setProgress(0);
@@ -245,6 +263,7 @@ export default function VideoAnalyzer() {
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     storedFramesRef.current = [];
+    weaponTipsRef.current = [];
     setIsAnalyzing(true);
     setDone(false);
     setProgress(0);
@@ -302,12 +321,21 @@ export default function VideoAnalyzer() {
           } catch (_) { /* スキップ */ }
 
           storedFramesRef.current.push({ time: video.currentTime, landmarks });
+          if (currentMode === 'weapon' && landmarks) {
+            const { tip } = estimateWeaponTip(landmarks, weaponConfigRef.current, video.currentTime);
+            if (tip) weaponTipsRef.current.push(tip);
+          }
           analysisFrames.push({
             time: Math.round(video.currentTime * 100) / 100,
             angles,
             landmarks,
           });
           drawFrame(ctx, canvas.width, canvas.height, landmarks, storedFramesRef.current.length - 1, currentMode, true);
+          if (currentMode === 'weapon') {
+            drawWeaponTrail(ctx, weaponTipsRef.current, video.currentTime, weaponConfigRef.current, canvas.width, canvas.height);
+            const latestTip = weaponTipsRef.current.at(-1) ?? null;
+            drawWeaponTip(ctx, latestTip, weaponConfigRef.current, canvas.width, canvas.height);
+          }
 
           frameIdx++;
           setProgress(Math.min(100, Math.round((frameIdx / totalFrames) * 100)));
@@ -384,10 +412,62 @@ export default function VideoAnalyzer() {
           ))}
         </div>
         {mode === 'weapon' && (
-          <div className="mt-2">
+          <div className="mt-2 space-y-3">
             <p className="text-xs text-cyan-400/80">
               武器術では上半身と手首の動きを見やすくするため、下半身を半透明で表示します。
             </p>
+            <div className="flex items-center gap-3">
+              <label className="w-28 shrink-0 text-xs text-slate-400">武器長（前腕の倍率）</label>
+              <input
+                type="range"
+                min={1.0}
+                max={3.0}
+                step={0.5}
+                value={weaponConfig.lengthMultiplier}
+                onChange={e => setWeaponConfig(c => ({ ...c, lengthMultiplier: Number(e.target.value) }))}
+                className="flex-1 accent-amber-500"
+              />
+              <span className="w-8 text-right text-xs text-slate-300">×{weaponConfig.lengthMultiplier}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-xs text-slate-400">利き手</span>
+              <div className="flex gap-1">
+                {([['auto', '自動'], ['right', '右手'], ['left', '左手']] as const).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setWeaponConfig(c => ({ ...c, dominantHand: val }))}
+                    className={`min-h-[32px] rounded-lg px-3 py-1 text-xs font-medium transition-colors ${
+                      weaponConfig.dominantHand === val
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'border border-slate-700 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-28 shrink-0 text-xs text-slate-400">軌跡色</span>
+              <div className="flex gap-1">
+                {([['#f59e0b', '金色'], ['#22d3ee', 'シアン'], ['#f87171', '赤']] as const).map(([color, label]) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setWeaponConfig(c => ({ ...c, trailColor: color }))}
+                    className={`min-h-[32px] rounded-lg border px-3 py-1 text-xs font-medium transition-colors ${
+                      weaponConfig.trailColor === color
+                        ? 'border-white bg-slate-800'
+                        : 'border-slate-700 hover:bg-slate-800'
+                    }`}
+                    style={{ color }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>
