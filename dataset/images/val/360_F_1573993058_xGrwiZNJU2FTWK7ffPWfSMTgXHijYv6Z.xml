@@ -1,0 +1,14 @@
+<annotation verified="yes">
+	<folder>val</folder>
+	<filename>360_F_1573993058_xGrwiZNJU2FTWK7ffPWfSMTgXHijYv6Z.jpg</filename>
+	<path>C:\Users\haruc\projects\form-sensei\dataset\images\val\360_F_1573993058_xGrwiZNJU2FTWK7ffPWfSMTgXHijYv6Z.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>641</width>
+		<height>360</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+</annotation>
