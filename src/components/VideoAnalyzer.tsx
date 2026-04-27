@@ -338,9 +338,15 @@ export default function VideoAnalyzer() {
           } catch (_) { /* スキップ */ }
 
           storedFramesRef.current.push({ time: video.currentTime, landmarks });
-          if (currentMode === 'weapon' && frameIdx % 2 === 0) {
+          if (currentMode === 'weapon' && frameIdx % 5 === 0) {
             const { tip } = await detectWeapons(video);
-            if (tip) weaponTipsRef.current.push({ x: tip.cx, y: tip.cy, time: video.currentTime });
+            if (tip) {
+              const prev = weaponTipsRef.current.at(-1);
+              const dist = prev ? Math.hypot(tip.cx - prev.x, tip.cy - prev.y) : 0;
+              if (!prev || dist < 0.25) {
+                weaponTipsRef.current.push({ x: tip.cx, y: tip.cy, time: video.currentTime });
+              }
+            }
           }
           analysisFrames.push({
             time: Math.round(video.currentTime * 100) / 100,
