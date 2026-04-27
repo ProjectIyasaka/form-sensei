@@ -274,7 +274,7 @@ export default function VideoAnalyzer() {
       try {
         await loadWeaponDetector();
       } catch (e) {
-        setErrorMessage(`武器検出モデルの読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+        setErrorMessage(`武器検出モデルの読み込みに失敗しました（78MBのダウンロードが必要です）: ${e instanceof Error ? e.message : String(e)}`);
         return;
       } finally {
         setLoadingDetector(false);
@@ -549,7 +549,7 @@ export default function VideoAnalyzer() {
       )}
 
       {loadingModel && <Spinner label="モデル読み込み中..." />}
-      {loadingDetector && <Spinner label="武器検出モデル読み込み中... (126MB)" />}
+      {loadingDetector && <Spinner label="武器検出モデル読み込み中... (78MB)" />}
 
       {isAnalyzing && (
         <div className="space-y-2">
