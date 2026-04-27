@@ -1,0 +1,2 @@
+katana_tip
+katana_grip

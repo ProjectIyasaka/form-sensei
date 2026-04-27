@@ -21,12 +21,15 @@ import {
   normalizeLandmarks,
 } from '../lib/video-analysis';
 import {
-  estimateWeaponTip,
   drawWeaponTrail,
   drawWeaponTip,
   type WeaponTipPoint,
   type WeaponConfig,
 } from '../lib/weapon-tracking';
+import {
+  loadWeaponDetector,
+  detectWeapons,
+} from '../lib/weapon-detector';
 
 const WASM_FILE_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 const MODEL_ASSET_PATH =
@@ -73,6 +76,7 @@ export default function VideoAnalyzer() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [mode, setMode]                 = useState<BudoMode>('no-weapon');
   const [weaponConfig, setWeaponConfig] = useState<WeaponConfig>({ lengthMultiplier: 2.0, dominantHand: 'auto', trailColor: '#f59e0b', trailWidth: 3, trailFade: true });
+  const [loadingDetector, setLoadingDetector] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savedSnapshotId, setSavedSnapshotId] = useState<string | null>(null);
 
@@ -264,6 +268,19 @@ export default function VideoAnalyzer() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     storedFramesRef.current = [];
     weaponTipsRef.current = [];
+
+    if (modeRef.current === 'weapon') {
+      setLoadingDetector(true);
+      try {
+        await loadWeaponDetector();
+      } catch (e) {
+        setErrorMessage('武器検出モデルの読み込みに失敗しました（126MBのダウンロードが必要です）。');
+        return;
+      } finally {
+        setLoadingDetector(false);
+      }
+    }
+
     setIsAnalyzing(true);
     setDone(false);
     setProgress(0);
@@ -307,7 +324,7 @@ export default function VideoAnalyzer() {
           reject(new Error(`フレーム${frameIdx}でシークタイムアウト`));
         }, 5000);
 
-        const handleSeeked = () => {
+        const handleSeeked = async () => {
           clearTimeout(timer);
           video.onseeked = null;
           const timestampMs = video.currentTime * 1000;
@@ -321,9 +338,9 @@ export default function VideoAnalyzer() {
           } catch (_) { /* スキップ */ }
 
           storedFramesRef.current.push({ time: video.currentTime, landmarks });
-          if (currentMode === 'weapon' && landmarks) {
-            const { tip } = estimateWeaponTip(landmarks, weaponConfigRef.current, video.currentTime);
-            if (tip) weaponTipsRef.current.push(tip);
+          if (currentMode === 'weapon') {
+            const { tip } = await detectWeapons(video);
+            if (tip) weaponTipsRef.current.push({ x: tip.cx, y: tip.cy, time: video.currentTime });
           }
           analysisFrames.push({
             time: Math.round(video.currentTime * 100) / 100,
@@ -532,6 +549,7 @@ export default function VideoAnalyzer() {
       )}
 
       {loadingModel && <Spinner label="モデル読み込み中..." />}
+      {loadingDetector && <Spinner label="武器検出モデル読み込み中... (126MB)" />}
 
       {isAnalyzing && (
         <div className="space-y-2">
