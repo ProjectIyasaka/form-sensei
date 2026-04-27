@@ -1,6 +1,8 @@
 import * as ort from 'onnxruntime-web';
 
-const MODEL_PATH = 'https://github.com/ProjectIyasaka/form-sensei/releases/download/v1.0.0-models/katana_points_detector.onnx';
+const MODEL_PATH = import.meta.env.DEV
+  ? '/models/katana_points_detector.onnx'
+  : 'https://github.com/ProjectIyasaka/form-sensei/releases/download/v1.0.0-models/katana_points_detector.onnx';
 const INPUT_SIZE = 640;
 const CONF_THRESHOLD = 0.25;
 const NUM_QUERIES = 300;
