@@ -21,7 +21,10 @@ export async function loadWeaponDetector(): Promise<void> {
 
   sessionLoading = (async () => {
     ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/`;
-    session = await ort.InferenceSession.create(MODEL_PATH, {
+    const res = await fetch(MODEL_PATH);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    const buffer = await res.arrayBuffer();
+    session = await ort.InferenceSession.create(buffer, {
       executionProviders: ['wasm'],
     });
   })();
