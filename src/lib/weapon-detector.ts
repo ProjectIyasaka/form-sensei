@@ -4,7 +4,7 @@ const MODEL_PATH = import.meta.env.DEV
   ? '/models/katana_points_detector.onnx'
   : 'https://github.com/ProjectIyasaka/form-sensei/releases/download/v1.0.0-models/katana_points_detector.onnx';
 const INPUT_SIZE = 640;
-const CONF_THRESHOLD = 0.25;
+const CONF_THRESHOLD = 0.5;
 const NUM_QUERIES = 300;
 
 export type WeaponDetection = {
@@ -27,7 +27,7 @@ export async function loadWeaponDetector(): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const buffer = await res.arrayBuffer();
     session = await ort.InferenceSession.create(buffer, {
-      executionProviders: ['wasm'],
+      executionProviders: ['webgl', 'wasm'],
     });
   })();
   return sessionLoading;

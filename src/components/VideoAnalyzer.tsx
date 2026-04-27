@@ -338,7 +338,7 @@ export default function VideoAnalyzer() {
           } catch (_) { /* スキップ */ }
 
           storedFramesRef.current.push({ time: video.currentTime, landmarks });
-          if (currentMode === 'weapon') {
+          if (currentMode === 'weapon' && frameIdx % 2 === 0) {
             const { tip } = await detectWeapons(video);
             if (tip) weaponTipsRef.current.push({ x: tip.cx, y: tip.cy, time: video.currentTime });
           }
