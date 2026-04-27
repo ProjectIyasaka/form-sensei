@@ -274,7 +274,7 @@ export default function VideoAnalyzer() {
       try {
         await loadWeaponDetector();
       } catch (e) {
-        setErrorMessage('武器検出モデルの読み込みに失敗しました（126MBのダウンロードが必要です）。');
+        setErrorMessage(`武器検出モデルの読み込みに失敗しました: ${e instanceof Error ? e.message : String(e)}`);
         return;
       } finally {
         setLoadingDetector(false);
